@@ -300,10 +300,15 @@ actor GPGService {
 
     // MARK: - Keyservers (UserDefaults, no XPC needed)
 
+    /// Only servers that verify address ownership before serving a UID.
+    ///
+    /// keyserver.ubuntu.com and the rest of the SKS lineage accept an upload
+    /// from anyone claiming any address, so a stranger can publish a key
+    /// bearing your correspondent's email and have it auto-imported and used.
+    /// Add one back manually in Keyserver settings if you knowingly need it.
     static let defaultKeyservers = [
         "hkps://keys.openpgp.org",
         "hkps://keys.mailvelope.com",
-        "hkps://keyserver.ubuntu.com",
     ]
 
     nonisolated func getKeyservers() -> [String] {
