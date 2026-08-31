@@ -247,6 +247,36 @@ actor GPGService {
         }
     }
 
+    func importKeyData(_ keyData: Data) async throws -> KeyInfo {
+        let proxy = try connection.proxy()
+        let json: Data = try await withCheckedThrowingContinuation { continuation in
+            proxy.importKeyData(keyData: keyData) { data, error in
+                continuation.resume(with: data, error: error)
+            }
+        }
+        return try xpcDecode(KeyInfo.self, from: json)
+    }
+
+    func exportPublicKey(fingerprint: String) async throws -> Data {
+        let proxy = try connection.proxy()
+        return try await withCheckedThrowingContinuation { continuation in
+            proxy.exportPublicKey(fingerprint: fingerprint) { data, error in
+                continuation.resume(with: data, error: error)
+            }
+        }
+    }
+
+    // MARK: - Autocrypt
+
+    /// Whether outgoing mail carries an Autocrypt header. Off by default.
+    nonisolated func getAutocryptEnabled() -> Bool {
+        Self.defaults?.bool(forKey: "autocryptEnabled") ?? false
+    }
+
+    nonisolated func setAutocryptEnabled(_ enabled: Bool) {
+        Self.defaults?.set(enabled, forKey: "autocryptEnabled")
+    }
+
     func listPublicKeys() async throws -> [KeyInfo] {
         let proxy = try connection.proxy()
         return try await withCheckedThrowingContinuation { continuation in

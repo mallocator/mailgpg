@@ -202,6 +202,31 @@ extension GPGServiceImpl {
         guard let keyData = armoredKey.data(using: .utf8) else {
             reply(nil, GPGXPCError.make(.encodingFailed)); return
         }
+        importKeyData(keyData: keyData, reply: reply)
+    }
+
+    /// Export a public key in binary form for Autocrypt `keydata`.
+    /// --export-options export-minimal strips third-party signatures, which
+    /// keeps the header small and avoids republishing other people's
+    /// certifications through your mail.
+    func exportPublicKey(fingerprint: String,
+                         reply: @escaping (Data?, Error?) -> Void) {
+        do {
+            let fingerprint = try validatedKeyIdentifier(
+                fingerprint, fieldName: "fingerprint", allowShort: false)
+            let (out, stderr, code) = try gpg(
+                ["--export", "--export-options", "export-minimal", fingerprint])
+            guard code == 0, !out.isEmpty else {
+                throw GPGXPCError.make(.gpgFailed, message: "gpg export failed: \(stderr)")
+            }
+            reply(out, nil)
+        } catch {
+            reply(nil, error as NSError)
+        }
+    }
+
+    func importKeyData(keyData: Data,
+                       reply: @escaping (Data?, Error?) -> Void) {
         do {
             let (_, stderr, statusText, code) = try gpgWithStatus(
                 ["--import", "--batch", "--yes"],

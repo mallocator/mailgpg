@@ -113,6 +113,20 @@ import Foundation
         reply: @escaping (_ keyInfoJSON: Data?, Error?) -> Void
     )
 
+    /// Import a binary (non-armored) transferable public key — the form
+    /// Autocrypt headers carry. Returns a JSON-encoded `KeyInfo`.
+    func importKeyData(
+        keyData: Data,
+        reply: @escaping (_ keyInfoJSON: Data?, Error?) -> Void
+    )
+
+    /// Export a public key in binary (non-armored) form, for use as Autocrypt
+    /// `keydata`. Minimal: no local signatures or extra UIDs travel with it.
+    func exportPublicKey(
+        fingerprint: String,
+        reply: @escaping (_ keyData: Data?, Error?) -> Void
+    )
+
     /// List all public keys in the local keychain.
     /// Returns a JSON-encoded `[KeyInfo]`.
     func listPublicKeys(

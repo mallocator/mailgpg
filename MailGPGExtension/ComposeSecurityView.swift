@@ -45,6 +45,11 @@ final class ComposeSessionState: ObservableObject {
     /// The `KeyInfo` for each recipient that has a key. Keyed by email address (lowercased).
     /// Used by `MessageSecurityHandler` to get fingerprints for encryption.
     @Published var recipientKeys: [String: KeyInfo] = [:]
+    /// Prepared Autocrypt header value for this compose session, or nil when
+    /// the feature is off or the sender has no usable key. Computed when the
+    /// session opens so `additionalHeaders` — which must answer synchronously —
+    /// has it ready by send time.
+    @Published var autocryptHeader: String?
 
     /// Encryption is only possible when every recipient has a known public key.
     var canEncrypt: Bool {
@@ -67,6 +72,7 @@ struct ComposeSecurityView: View {
     @ObservedObject var state: ComposeSessionState
     @State private var hostAppAvailable: Bool? = nil
     @State private var protectSubject: Bool = GPGService.shared.getProtectSubject()
+    @State private var autocryptEnabled: Bool = GPGService.shared.getAutocryptEnabled()
 
     var body: some View {
         NavigationStack {
@@ -146,6 +152,17 @@ struct ComposeSecurityView: View {
                 }
 
                 Divider()
+
+                Toggle("Attach my key (Autocrypt)", isOn: $autocryptEnabled)
+                    .font(.callout)
+                    .toggleStyle(.checkbox)
+                    .onChange(of: autocryptEnabled) { _, newValue in
+                        GPGService.shared.setAutocryptEnabled(newValue)
+                    }
+                    .help("Adds your public key to outgoing mail as an Autocrypt "
+                        + "header, and picks up correspondents' keys from the mail "
+                        + "they send you — so key exchange happens through the "
+                        + "correspondence instead of a keyserver.")
 
                 Toggle("Hide subject line", isOn: $protectSubject)
                     .font(.callout)

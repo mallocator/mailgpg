@@ -223,6 +223,47 @@ placeholder the decode path already recognised. **Off by default**, with a
 "Hide subject line" toggle in the compose panel: recipients whose client does
 not implement protected headers see `...` and no explanation.
 
+## Later round: performance, trust enforcement, Autocrypt
+
+**Detection before hashing** — the content-hash cache key made every plaintext
+message Mail indexed pay a full SHA-256, and the negative cache that avoided a
+rescan grew without bound. Detection now runs first, so only PGP messages are
+hashed or cached, and the decode cache is capped at 24 entries because it holds
+decrypted plaintext.
+
+**No more `gpg --card-status` per send** — both sign paths spawned it and used
+only the exit code, for a log line. With no smartcard present it starts scdaemon
+and can block for seconds. Smartcard keys still resolve when GPG needs them.
+
+**Revoked and expired signing keys** — GPG emits `REVKEYSIG` / `EXPKEYSIG`
+instead of `GOODSIG`, and neither parser knew them, so both reported the generic
+"no valid signature". A revoked key now says so.
+
+**Recipient key pinning** — the fingerprint used for each address is remembered,
+and a different key for a known address blocks the send naming both key IDs.
+Marking the new key verified in Manage Keys accepts and re-pins it. This is not
+GnuPG's `--trust-model tofu`: in batch mode a TOFU conflict fails the encrypt
+without naming a recipient, and first contact fails too unless the default
+policy is loosened to the point of pointlessness.
+
+**Autocrypt** (off by default, toggle in the compose panel) — outgoing mail
+carries your public key in an `Autocrypt` header, and keys are harvested from
+incoming mail whose `addr` matches the From address. Key exchange then happens
+through the correspondence rather than a keyserver you have to trust. Harvested
+keys are still subject to pinning, so a later substitution is still caught.
+
+To exercise Autocrypt, turn it on, mail yourself from an account whose key the
+Mac does not hold, and watch:
+
+```bash
+log stream --predicate 'subsystem == "net.pyxzl.mailgpg"' --level debug | grep autocrypt
+```
+
+You want `header prepared` on the way out and `imported key` on the way in. If
+the outgoing header never appears, check the raw source of a sent message for an
+`Autocrypt:` line — a very long unfolded header is the most likely thing for
+Mail to mangle, and folding it is the first thing to try.
+
 ## Testing the four
 
 Signer mismatch is the one worth exercising deliberately, since it changes what
