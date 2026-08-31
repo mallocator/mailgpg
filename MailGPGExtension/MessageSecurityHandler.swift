@@ -151,10 +151,13 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
             .map(\.bareAddress)
             .filter { !$0.isEmpty }
 
-        // Nothing addressed yet: leave both available rather than flickering
-        // the buttons off while the user is still typing.
+        // Nothing addressed yet. Answer "not offered" rather than "offered":
+        // Mail derives the compose window's initial sign and encrypt state from
+        // what we report here, so an optimistic answer while the To field is
+        // still empty latches both toggles on for a message that may end up
+        // addressed to someone who cannot read either.
         guard !recipients.isEmpty else {
-            return OfferPolicy(canSign: true, canEncrypt: true)
+            return OfferPolicy(canSign: false, canEncrypt: false)
         }
 
         let state = sessionState(for: message)
