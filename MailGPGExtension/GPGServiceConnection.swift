@@ -140,21 +140,23 @@ final class GPGServiceConnection {
         // IS an NSObject and therefore castable to AnyHashable.
         let stringArray = classSet(NSArray.self, NSString.self)
 
-        // encrypt(data:recipientFingerprints:reply:) — argument index 1
-        interface.setClasses(
-            stringArray,
-            for: #selector(GPGXPCProtocol.encrypt(data:recipientFingerprints:reply:)),
-            argumentIndex: 1,
-            ofReply: false
-        )
+        // Both encrypt methods now carry two string arrays — the visible
+        // recipients and the hidden (BCC) ones. Every array argument needs its
+        // own declaration or XPC refuses to send it.
 
-        // signAndEncrypt(data:signerKeyID:recipientFingerprints:reply:) — argument index 2
-        interface.setClasses(
-            stringArray,
-            for: #selector(GPGXPCProtocol.signAndEncrypt(data:signerKeyID:recipientFingerprints:reply:)),
-            argumentIndex: 2,
-            ofReply: false
-        )
+        // encrypt(data:recipientFingerprints:hiddenRecipientFingerprints:reply:)
+        let encryptSelector = #selector(GPGXPCProtocol.encrypt(data:recipientFingerprints:hiddenRecipientFingerprints:reply:))
+        for index in 1...2 {
+            interface.setClasses(stringArray, for: encryptSelector,
+                                 argumentIndex: index, ofReply: false)
+        }
+
+        // signAndEncrypt(data:signerKeyID:recipientFingerprints:hiddenRecipientFingerprints:reply:)
+        let signEncryptSelector = #selector(GPGXPCProtocol.signAndEncrypt(data:signerKeyID:recipientFingerprints:hiddenRecipientFingerprints:reply:))
+        for index in 2...3 {
+            interface.setClasses(stringArray, for: signEncryptSelector,
+                                 argumentIndex: index, ofReply: false)
+        }
     }
 
     /// Builds a `Set<AnyHashable>` from Obj-C class objects.

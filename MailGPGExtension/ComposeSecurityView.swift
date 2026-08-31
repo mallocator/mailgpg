@@ -71,9 +71,6 @@ enum RecipientKeyStatus: Equatable {
 struct ComposeSecurityView: View {
     @ObservedObject var state: ComposeSessionState
     @State private var hostAppAvailable: Bool? = nil
-    @State private var protectSubject: Bool = GPGService.shared.getProtectSubject()
-    @State private var autocryptEnabled: Bool = GPGService.shared.getAutocryptEnabled()
-    @State private var knownOnly: Bool = GPGService.shared.getKnownCorrespondentsOnly()
 
     var body: some View {
         NavigationStack {
@@ -154,38 +151,7 @@ struct ComposeSecurityView: View {
 
                 Divider()
 
-                Toggle("Only offer PGP to known correspondents", isOn: $knownOnly)
-                    .font(.callout)
-                    .toggleStyle(.checkbox)
-                    .onChange(of: knownOnly) { _, newValue in
-                        GPGService.shared.setKnownCorrespondentsOnly(newValue)
-                    }
-                    .help("Signing and encryption are offered only for people who "
-                        + "have sent you PGP mail or who you have encrypted to "
-                        + "before. Stops signed mail reaching clients that show it "
-                        + "as a cryptic attachment, and stops encryption to keys "
-                        + "nobody has used in years.")
-
-                Toggle("Attach my key (Autocrypt)", isOn: $autocryptEnabled)
-                    .font(.callout)
-                    .toggleStyle(.checkbox)
-                    .onChange(of: autocryptEnabled) { _, newValue in
-                        GPGService.shared.setAutocryptEnabled(newValue)
-                    }
-                    .help("Adds your public key to outgoing mail as an Autocrypt "
-                        + "header, and picks up correspondents' keys from the mail "
-                        + "they send you — so key exchange happens through the "
-                        + "correspondence instead of a keyserver.")
-
-                Toggle("Hide subject line", isOn: $protectSubject)
-                    .font(.callout)
-                    .toggleStyle(.checkbox)
-                    .onChange(of: protectSubject) { _, newValue in
-                        GPGService.shared.setProtectSubject(newValue)
-                    }
-                    .help("Moves the Subject into the encrypted part of the message. "
-                        + "Recipients whose mail client does not support protected "
-                        + "headers will see \"...\" as the subject instead.")
+                PGPOptionsToggles()
 
                 NavigationLink {
                     KeyManagementView()
@@ -231,6 +197,60 @@ struct ComposeSecurityView: View {
 }
 
 // MARK: - Subviews
+
+/// The three policy switches, in their own view.
+///
+/// Not a style choice: SwiftUI type-checks a view body as one expression, and
+/// folding these into the main VStack — three modifier chains whose `.help`
+/// text was built with string concatenation — pushed it past the compiler's
+/// budget and failed the build outright. Small bodies and plain literals.
+private struct PGPOptionsToggles: View {
+    @State private var knownOnly: Bool = GPGService.shared.getKnownCorrespondentsOnly()
+    @State private var autocryptEnabled: Bool = GPGService.shared.getAutocryptEnabled()
+    @State private var protectSubject: Bool = GPGService.shared.getProtectSubject()
+
+    private static let knownOnlyHelp = """
+        Signing and encryption are offered only for people who have sent you PGP \
+        mail, who publish a key through Web Key Directory, or who you have \
+        encrypted to before. Stops signed mail reaching clients that show it as a \
+        cryptic attachment, and stops encryption to keys nobody has used in years.
+        """
+
+    private static let autocryptHelp = """
+        Adds your public key to outgoing mail as an Autocrypt header, and picks up \
+        correspondents' keys from the mail they send you — so key exchange happens \
+        through the correspondence instead of a keyserver.
+        """
+
+    private static let protectSubjectHelp = """
+        Moves the Subject into the encrypted part of the message. Recipients whose \
+        mail client does not support protected headers will see "..." instead.
+        """
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Only offer PGP to known correspondents", isOn: $knownOnly)
+                .onChange(of: knownOnly) { _, value in
+                    GPGService.shared.setKnownCorrespondentsOnly(value)
+                }
+                .help(Self.knownOnlyHelp)
+
+            Toggle("Attach my key (Autocrypt)", isOn: $autocryptEnabled)
+                .onChange(of: autocryptEnabled) { _, value in
+                    GPGService.shared.setAutocryptEnabled(value)
+                }
+                .help(Self.autocryptHelp)
+
+            Toggle("Hide subject line", isOn: $protectSubject)
+                .onChange(of: protectSubject) { _, value in
+                    GPGService.shared.setProtectSubject(value)
+                }
+                .help(Self.protectSubjectHelp)
+        }
+        .font(.callout)
+        .toggleStyle(.checkbox)
+    }
+}
 
 private struct RecipientRow: View {
     let email: String
