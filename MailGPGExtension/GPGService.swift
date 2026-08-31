@@ -316,6 +316,15 @@ actor GPGService {
         "hkps://keys.mailvelope.com",
     ]
 
+    /// Whether outgoing encrypted mail hides its Subject line. Off by default.
+    nonisolated func getProtectSubject() -> Bool {
+        Self.defaults?.bool(forKey: "protectSubject") ?? false
+    }
+
+    nonisolated func setProtectSubject(_ enabled: Bool) {
+        Self.defaults?.set(enabled, forKey: "protectSubject")
+    }
+
     nonisolated func getKeyservers() -> [String] {
         Self.defaults?.stringArray(forKey: "keyservers") ?? Self.defaultKeyservers
     }

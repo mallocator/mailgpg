@@ -16,8 +16,12 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
     /// instead of the user's default `~/.gnupg`. Intended for testing only.
     let gnupgHome: String?
 
-    init(gnupgHome: String? = nil) {
+    /// Overrides the stored `protectSubject` preference. Testing only.
+    private let protectSubjectOverride: Bool?
+
+    init(gnupgHome: String? = nil, protectSubject: Bool? = nil) {
         self.gnupgHome = gnupgHome
+        self.protectSubjectOverride = protectSubject
         super.init()
     }
 
@@ -38,6 +42,15 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
             throw GPGXPCError.make(.encodingFailed, message: "Invalid \(fieldName)")
         }
         return value.uppercased()
+    }
+
+    /// Whether to move the Subject line inside the encrypted part.
+    ///
+    /// Off by default and deliberately so: a recipient whose client does not
+    /// understand protected headers sees a subject of "..." and no way to know
+    /// why. Worth turning on when you know who you write to.
+    var protectSubject: Bool {
+        protectSubjectOverride ?? (Self.defaults?.bool(forKey: "protectSubject") ?? false)
     }
 
     /// Returns the current keyserver list from shared UserDefaults.

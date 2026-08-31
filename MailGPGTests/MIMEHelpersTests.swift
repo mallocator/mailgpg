@@ -322,6 +322,36 @@ final class MIMEHelpersTests: XCTestCase {
         XCTAssertEqual(svc.extractPGPPayload(from: data), data)
     }
 
+    // MARK: - protected subject
+
+    func testProtectedSubject_offByDefault_subjectStaysOutside() {
+        let svc = GPGServiceImpl(protectSubject: false)
+        let headers = "Subject: Quarterly numbers\nContent-Type: text/plain; charset=utf-8"
+        let inner = String(data: svc.buildInnerMIMEEntity(rawHeaders: headers,
+                                                          body: "Hi".data(using: .utf8)!),
+                           encoding: .utf8) ?? ""
+        XCTAssertFalse(inner.contains("Subject:"))
+        XCTAssertFalse(inner.contains("protected-headers"))
+    }
+
+    func testProtectedSubject_movesSubjectInsideAndPlaceholdersOutside() {
+        let svc = GPGServiceImpl(protectSubject: true)
+        let original = "Subject: Quarterly numbers\nContent-Type: text/plain; charset=utf-8\n\nHi"
+            .data(using: .utf8)!
+        let (headers, body) = svc.splitMessage(original)
+
+        let inner = String(data: svc.buildInnerMIMEEntity(rawHeaders: headers, body: body),
+                           encoding: .utf8) ?? ""
+        XCTAssertTrue(inner.contains("Subject: Quarterly numbers"))
+        XCTAssertTrue(inner.contains("protected-headers=\"v1\""))
+
+        let outer = String(data: svc.buildEncryptedMessage(original: original,
+                                                           encrypted: Data("CIPHER".utf8)),
+                           encoding: .utf8) ?? ""
+        XCTAssertTrue(outer.contains("Subject: ..."))
+        XCTAssertFalse(outer.contains("Quarterly numbers"))
+    }
+
     // MARK: - buildInnerMIMEEntity
 
     func testBuildInnerMIMEEntity_basic() {

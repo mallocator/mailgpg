@@ -64,6 +64,7 @@ enum RecipientKeyStatus: Equatable {
 struct ComposeSecurityView: View {
     @ObservedObject var state: ComposeSessionState
     @State private var hostAppAvailable: Bool? = nil
+    @State private var protectSubject: Bool = GPGService.shared.getProtectSubject()
 
     var body: some View {
         NavigationStack {
@@ -143,6 +144,16 @@ struct ComposeSecurityView: View {
                 }
 
                 Divider()
+
+                Toggle("Hide subject line", isOn: $protectSubject)
+                    .font(.callout)
+                    .toggleStyle(.checkbox)
+                    .onChange(of: protectSubject) { _, newValue in
+                        GPGService.shared.setProtectSubject(newValue)
+                    }
+                    .help("Moves the Subject into the encrypted part of the message. "
+                        + "Recipients whose mail client does not support protected "
+                        + "headers will see \"...\" as the subject instead.")
 
                 NavigationLink {
                     KeyManagementView()
