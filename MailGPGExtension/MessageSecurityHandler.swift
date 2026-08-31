@@ -188,7 +188,11 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
             return
         }
 
-        let senderEmail  = message.fromAddress.rawString.lowercased()
+        // `rawString` is the full RFC 2822 form — "Ravi <ravi@example.com>",
+        // display name and angle brackets included. Comparing that to a key's
+        // bare email never matches when a display name is present. Use the
+        // same normalisation the recipient lookup uses.
+        let senderEmail  = message.fromAddress.bareAddress
         let state = sessionState(for: message)
         let fingerprints = state?.recipientKeys.values.map(\.fingerprint) ?? []
 
@@ -241,15 +245,23 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 let usable = secretKeys.filter { !$0.isRevoked && $0.expiresAt.map { $0 > Date() } ?? true }
                 log.info("encode: \(usable.count) usable key(s) of \(secretKeys.count) total")
 
+                // Signing must use the key that belongs to the From address.
+                // Falling back to "whatever key is first in the keyring" signs
+                // outgoing mail with an unrelated identity, silently.
                 let signerKey = usable.first(where: { $0.email.lowercased() == senderEmail })
-                                ?? usable.first
+                if signerKey == nil {
+                    log.error("encode: no secret key matches the From address")
+                }
+                // For encryption we only need *a* key of ours so the Sent copy
+                // stays decryptable — any of the user's own secret keys will do.
+                let ownKeyForSentCopy = signerKey ?? usable.first
 
                 // When encrypting, include the sender's key so the sent copy is
                 // decryptable. Without this, Mail's indexer calls decodedMessage on
                 // the sent message, decryption fails, and the error triggers a KVO
                 // re-entrancy crash in Mail.app.
                 var encryptFingerprints = fingerprints
-                if shouldEncrypt, let sk = signerKey {
+                if shouldEncrypt, let sk = ownKeyForSentCopy {
                     encryptFingerprints.append(sk.fingerprint)
                     log.info("encode: added sender key to encryption recipients")
                 }
