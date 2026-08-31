@@ -135,7 +135,9 @@ struct ComposeSecurityView: View {
                             state.recipientKeyStatus.sorted(by: { $0.key < $1.key }),
                             id: \.key
                         ) { email, keyStatus in
-                            RecipientRow(email: email, status: keyStatus)
+                            RecipientRow(email: email,
+                                         status: keyStatus,
+                                         key: state.recipientKeys[email])
                         }
                     }
                 }
@@ -190,6 +192,14 @@ struct ComposeSecurityView: View {
 private struct RecipientRow: View {
     let email: String
     let status: RecipientKeyStatus
+    /// The key that would actually be used. Nil while loading or when none was found.
+    let key: KeyInfo?
+
+    /// A key is only worth a green badge once it has been verified locally.
+    /// Anything auto-fetched from a keyserver starts out unverified, and the UI
+    /// must say so — encryption runs with `--trust-model always`, so nothing
+    /// else in the pipeline will.
+    private var verified: Bool { key?.trusted ?? false }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -207,9 +217,9 @@ private struct RecipientRow: View {
     private var icon: some View {
         switch status {
         case .found:
-            Image(systemName: "key.fill")
+            Image(systemName: verified ? "key.fill" : "key")
                 .font(.caption)
-                .foregroundStyle(.green)
+                .foregroundStyle(verified ? Color.green : Color.orange)
         case .notFound:
             Image(systemName: "key.slash")
                 .font(.caption)
@@ -224,9 +234,16 @@ private struct RecipientRow: View {
     private var statusLabel: some View {
         switch status {
         case .found:
-            Text("Key found")
-                .font(.caption2)
-                .foregroundStyle(.green)
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(key?.keyID ?? "Key found")
+                    .font(.caption2)
+                    .monospaced()
+                    .textSelection(.enabled)
+                    .foregroundStyle(verified ? Color.green : Color.orange)
+                Text(verified ? "verified" : "unverified")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         case .notFound:
             Text("No key")
                 .font(.caption2)
