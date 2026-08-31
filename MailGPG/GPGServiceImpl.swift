@@ -259,8 +259,6 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
         do {
             let signerKeyID = try validatedKeyIdentifier(signerKeyID, fieldName: "signer key ID")
             if gnupgHome == nil { try GPGAgent.ensureRunning() }
-            let cardCode = (try? gpg(["--card-status"]))?.exitCode ?? -1
-            log.info("sign: card-status exit=\(cardCode)")
             let (rawHeaders, body) = splitMessage(data)
 
             // RFC 3156 §5: the detached signature must cover the complete first
@@ -340,9 +338,6 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
                 try validatedKeyIdentifier($0, fieldName: "hidden recipient fingerprint", allowShort: false)
             }
             if gnupgHome == nil { try GPGAgent.ensureRunning() }
-            log.info("signAndEncrypt: polling card-status…")
-            let cardResult = try? gpg(["--card-status"])
-            log.info("signAndEncrypt: card-status exit=\(cardResult?.exitCode ?? -1)")
             let (rawHeaders, body) = splitMessage(data)
             let innerMIME = buildInnerMIMEEntity(rawHeaders: rawHeaders, body: body)
             // --sign --encrypt in one pass: the signature is embedded inside
