@@ -68,7 +68,14 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
     func mailComposeSessionDidEnd(_ session: MEComposeSession) {
         log.info("compose session ended")
         ComposeStateStore.shared.remove(session.sessionID)
-        MessageSecurityHandler.shared.clearUUIDCache()
+        // Closing one compose window used to discard every cached decoded
+        // message, so reading mail after writing any meant decrypting it all
+        // again. Only drop the caches once no compose window is left, which is
+        // the point at which the outgoing-message entries can no longer match
+        // anything.
+        if ComposeStateStore.shared.isEmpty {
+            MessageSecurityHandler.shared.clearUUIDCache()
+        }
     }
 
     // MARK: - Recipient annotations

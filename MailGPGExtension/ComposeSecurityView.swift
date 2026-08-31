@@ -13,25 +13,47 @@ final class ComposeStateStore {
     static let shared = ComposeStateStore()
 
     private var states: [UUID: ComposeSessionState] = [:]
+    /// The dictionary is written from Mail's compose callbacks and read from
+    /// the async recipient-annotation task and from the security handler, which
+    /// are not the same thread. A Swift Dictionary read concurrently with a
+    /// write is undefined behaviour, and the failure mode is a crash inside
+    /// Mail rather than anything that looks like it came from here.
+    private let lock = NSLock()
 
     @discardableResult
     func register(_ session: MEComposeSession) -> ComposeSessionState {
         let state = ComposeSessionState()
+        lock.lock()
         states[session.sessionID] = state
+        lock.unlock()
         return state
     }
 
     func state(for sessionID: UUID) -> ComposeSessionState? {
-        states[sessionID]
+        lock.lock()
+        defer { lock.unlock() }
+        return states[sessionID]
     }
 
     func remove(_ sessionID: UUID) {
+        lock.lock()
         states.removeValue(forKey: sessionID)
+        lock.unlock()
     }
 
     /// Best-effort: returns the state for the only active session, or nil if ambiguous.
     var singleActiveState: ComposeSessionState? {
-        states.count == 1 ? states.values.first : nil
+        lock.lock()
+        defer { lock.unlock() }
+        return states.count == 1 ? states.values.first : nil
+    }
+
+    /// Whether any compose window is still open. Used to decide whether cached
+    /// outgoing-message state is still needed.
+    var isEmpty: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return states.isEmpty
     }
 }
 
