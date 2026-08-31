@@ -68,7 +68,23 @@ final class GPGServiceListener: NSObject, NSXPCListenerDelegate {
         // Note: PID-based lookup has a theoretical TOCTOU race (the process
         // could be replaced between connection and validation), but this is
         // acceptable for validating our own extension on the same machine.
-        let requirement = "identifier \"net.pyxzl.MailGPG.MailGPGExtension\""
+        // A bundle identifier on its own is a self-declared string: ANY binary,
+        // ad-hoc signed by anyone, can claim it and satisfy `identifier "..."`.
+        // Without the anchor and team-ID clauses below, any process running as
+        // the user could open this Mach service and use it as a signing and
+        // decryption oracle — silently, because gpg-agent caches the passphrase.
+        //
+        //   anchor apple generic  → the cert chain really is an Apple-issued one
+        //   subject.OU            → the leaf cert belongs to our Developer team
+        //
+        // Both "Apple Development" and "Developer ID Application" certificates
+        // carry the team ID in the leaf OU, so this holds for local debug builds
+        // and notarised release builds alike.
+        let requirement = """
+            identifier "net.pyxzl.MailGPG.MailGPGExtension" \
+            and anchor apple generic \
+            and certificate leaf[subject.OU] = "3HKD37M482"
+            """
         let pid = connection.processIdentifier
 
         var secCode: SecCode?
