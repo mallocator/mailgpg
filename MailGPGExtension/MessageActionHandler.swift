@@ -46,6 +46,10 @@ class MessageActionHandler: NSObject, MEMessageActionHandler {
         Task {
             do {
                 let imported = try await GPGService.shared.importKeyData(parsed.keyData)
+                // Advertising a key by Autocrypt is a statement that this
+                // correspondent handles PGP, which is what decides whether we
+                // offer signing and encryption when writing back.
+                GPGService.shared.recordPGPReceived(from: parsed.addr)
                 log.info("autocrypt: imported key \(imported.keyID, privacy: .public) for sender")
             } catch {
                 log.error("autocrypt: import failed")

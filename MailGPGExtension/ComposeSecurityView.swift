@@ -73,6 +73,7 @@ struct ComposeSecurityView: View {
     @State private var hostAppAvailable: Bool? = nil
     @State private var protectSubject: Bool = GPGService.shared.getProtectSubject()
     @State private var autocryptEnabled: Bool = GPGService.shared.getAutocryptEnabled()
+    @State private var knownOnly: Bool = GPGService.shared.getKnownCorrespondentsOnly()
 
     var body: some View {
         NavigationStack {
@@ -152,6 +153,18 @@ struct ComposeSecurityView: View {
                 }
 
                 Divider()
+
+                Toggle("Only offer PGP to known correspondents", isOn: $knownOnly)
+                    .font(.callout)
+                    .toggleStyle(.checkbox)
+                    .onChange(of: knownOnly) { _, newValue in
+                        GPGService.shared.setKnownCorrespondentsOnly(newValue)
+                    }
+                    .help("Signing and encryption are offered only for people who "
+                        + "have sent you PGP mail or who you have encrypted to "
+                        + "before. Stops signed mail reaching clients that show it "
+                        + "as a cryptic attachment, and stops encryption to keys "
+                        + "nobody has used in years.")
 
                 Toggle("Attach my key (Autocrypt)", isOn: $autocryptEnabled)
                     .font(.callout)

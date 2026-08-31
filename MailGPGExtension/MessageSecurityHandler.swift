@@ -98,16 +98,18 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     // MARK: - Encoding (outgoing)
 
     func getEncodingStatus(for message: MEMessage, composeContext: MEComposeContext, completionHandler: @escaping (MEOutgoingMessageEncodingStatus) -> Void) {
+        let policy = self.offerPolicy(for: message)
+
         // If we already know whether the host app is reachable, respond immediately.
         if let available = HostAppReachability.shared.isAvailable {
-            completionHandler(Self.encodingStatus(hostAvailable: available))
+            completionHandler(Self.encodingStatus(hostAvailable: available, policy: policy))
             return
         }
 
         // Unknown state — only one caller should ping; the rest return optimistic
         // status for now (the banner in the compose panel covers the gap).
         guard HostAppReachability.shared.beginCheckIfNeeded() else {
-            completionHandler(Self.encodingStatus(hostAvailable: true))
+            completionHandler(Self.encodingStatus(hostAvailable: true, policy: policy))
             return
         }
 
@@ -121,24 +123,66 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 available = false
             }
             HostAppReachability.shared.isAvailable = available
-            completionHandler(Self.encodingStatus(hostAvailable: available))
+            completionHandler(Self.encodingStatus(hostAvailable: available, policy: policy))
         }
     }
 
-    private static func encodingStatus(hostAvailable: Bool) -> MEOutgoingMessageEncodingStatus {
-        if hostAvailable {
-            // Don't populate addressesFailingEncryption here — that causes Mail to
-            // show a popup mid-composition when a recipient's key hasn't loaded yet.
-            return MEOutgoingMessageEncodingStatus(
-                canSign: true, canEncrypt: true, securityError: nil,
-                addressesFailingEncryption: [])
-        } else {
+    struct OfferPolicy {
+        var canSign: Bool
+        var canEncrypt: Bool
+    }
+
+    /// Decide what to offer for this message.
+    ///
+    /// MailKit lets an extension say what it *can* do, never what Mail *will*
+    /// do — `composeContext.shouldSign` and `shouldEncrypt` are read-only. So
+    /// the only lever over "don't PGP this message" is to stop offering it.
+    ///
+    /// Offering both on every message is how a correspondent whose client has
+    /// no PGP support receives a signed message that reads as a cryptic
+    /// attachment, and how mail gets encrypted to a published key its owner
+    /// abandoned years ago. Both are worth avoiding by default.
+    private func offerPolicy(for message: MEMessage) -> OfferPolicy {
+        guard GPGService.shared.getKnownCorrespondentsOnly() else {
+            return OfferPolicy(canSign: true, canEncrypt: true)
+        }
+
+        let recipients = (message.toAddresses + message.ccAddresses + message.bccAddresses)
+            .map(\.bareAddress)
+            .filter { !$0.isEmpty }
+
+        // Nothing addressed yet: leave both available rather than flickering
+        // the buttons off while the user is still typing.
+        guard !recipients.isEmpty else {
+            return OfferPolicy(canSign: true, canEncrypt: true)
+        }
+
+        let state = sessionState(for: message)
+        // Verifying someone's key in Manage Keys is a deliberate act and counts
+        // as evidence — otherwise there is no way to start writing encrypted
+        // mail to someone who has never written to you.
+        let known = recipients.allSatisfy { email in
+            GPGService.shared.hasPGPEvidence(for: email)
+                || (state?.recipientKeys[email]?.trusted ?? false)
+        }
+        let haveKeys = recipients.allSatisfy { state?.recipientKeyStatus[$0] == .found }
+
+        return OfferPolicy(canSign: known, canEncrypt: known && haveKeys)
+    }
+
+    private static func encodingStatus(hostAvailable: Bool, policy: OfferPolicy) -> MEOutgoingMessageEncodingStatus {
+        guard hostAvailable else {
             return MEOutgoingMessageEncodingStatus(
                 canSign: false, canEncrypt: false,
                 securityError: GPGXPCError.make(.hostAppNotRunning,
                     message: "MailGPG host app is not running. Please open it to enable GPG operations."),
                 addressesFailingEncryption: [])
         }
+        // Don't populate addressesFailingEncryption — that causes Mail to
+        // show a popup mid-composition when a recipient's key hasn't loaded yet.
+        return MEOutgoingMessageEncodingStatus(
+            canSign: policy.canSign, canEncrypt: policy.canEncrypt,
+            securityError: nil, addressesFailingEncryption: [])
     }
 
     func encode(_ message: MEMessage, composeContext: MEComposeContext, completionHandler: @escaping (MEMessageEncodingResult) -> Void) {
@@ -350,6 +394,14 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
                 log.info("encode: encoded \(encodedData.rawData.count) bytes")
 
+                // Evidence for next time: these addresses demonstrably accept
+                // encrypted mail from us.
+                if shouldEncrypt {
+                    for email in visibleEmails.union(bccEmails) {
+                        GPGService.shared.recordEncryptedSend(to: email)
+                    }
+                }
+
                 let encodeResult = MEMessageEncodingResult(encodedMessage: encodedData, signingError: nil, encryptionError: nil)
 
                 // Store in UUID cache: both the encode result (so subsequent
@@ -518,6 +570,14 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         guard isEncrypted || isSigned else {
             log.debug("decodedMessage: not encrypted or signed — returning nil")
             return nil
+        }
+
+        // This message carries PGP, so its sender can handle PGP. Remember that:
+        // it is the signal that decides whether we offer signing and encryption
+        // when writing back to them.
+        if let from = Self.headerValue("from", in: data) {
+            let sender = Self.bareEmail(inHeaderValue: Self.decodeMIMEWords(from))
+            if !sender.isEmpty { GPGService.shared.recordPGPReceived(from: sender) }
         }
 
         // Only PGP messages get hashed and cached. The key is the content

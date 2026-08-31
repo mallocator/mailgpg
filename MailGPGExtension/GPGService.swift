@@ -363,6 +363,53 @@ actor GPGService {
         Self.defaults?.set(map, forKey: Self.pinnedKeysDefault)
     }
 
+    // MARK: - Evidence that a correspondent actually uses PGP
+
+    private static let encryptedSendsDefault = "encryptedSendsByAddress"
+    private static let pgpReceivedDefault    = "pgpReceivedFromAddress"
+
+    /// Note that we successfully encrypted a message to this address.
+    nonisolated func recordEncryptedSend(to email: String) {
+        var map = (Self.defaults?.dictionary(forKey: Self.encryptedSendsDefault) as? [String: Date]) ?? [:]
+        map[email.lowercased()] = Date()
+        Self.defaults?.set(map, forKey: Self.encryptedSendsDefault)
+    }
+
+    /// Note that a signed or encrypted message arrived from this address, or
+    /// that it advertised a key by Autocrypt.
+    nonisolated func recordPGPReceived(from email: String) {
+        let key = email.lowercased()
+        var map = (Self.defaults?.dictionary(forKey: Self.pgpReceivedDefault) as? [String: Date]) ?? [:]
+        // Only write when the day changed, so routine mail reading does not
+        // rewrite the defaults on every message Mail indexes.
+        if let seen = map[key], Calendar.current.isDateInToday(seen) { return }
+        map[key] = Date()
+        Self.defaults?.set(map, forKey: Self.pgpReceivedDefault)
+    }
+
+    /// Whether this address has ever demonstrated it can handle PGP.
+    ///
+    /// A published key is not evidence — anyone can publish one, and a key from
+    /// ten years ago that its owner has forgotten looks identical to a live one.
+    /// Evidence is use: mail they sent with PGP on it, or mail we successfully
+    /// encrypted to them before.
+    nonisolated func hasPGPEvidence(for email: String) -> Bool {
+        let key = email.lowercased()
+        let sent = Self.defaults?.dictionary(forKey: Self.encryptedSendsDefault) as? [String: Date]
+        let recv = Self.defaults?.dictionary(forKey: Self.pgpReceivedDefault) as? [String: Date]
+        return sent?[key] != nil || recv?[key] != nil
+    }
+
+    /// Whether signing and encryption are offered only for addresses with
+    /// evidence of PGP use. On by default.
+    nonisolated func getKnownCorrespondentsOnly() -> Bool {
+        Self.defaults?.object(forKey: "knownCorrespondentsOnly") as? Bool ?? true
+    }
+
+    nonisolated func setKnownCorrespondentsOnly(_ enabled: Bool) {
+        Self.defaults?.set(enabled, forKey: "knownCorrespondentsOnly")
+    }
+
     /// Whether outgoing encrypted mail hides its Subject line. Off by default.
     nonisolated func getProtectSubject() -> Bool {
         Self.defaults?.bool(forKey: "protectSubject") ?? false
