@@ -500,8 +500,9 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                         return
                     }
                     log.debug("decodedMessage: verifying signature (\(signedData.count) data bytes, \(signatureData.count) sig bytes)")
-                    let status = try await GPGService.shared.verify(data: signedData, signature: signatureData)
+                    let rawStatus = try await GPGService.shared.verify(data: signedData, signature: signatureData)
                     log.debug("decodedMessage: verify completed")
+                    let status = Self.checkSignerMatchesSender(rawStatus, messageData: data)
                     result = Self.makeDecodedMessage(data: data, status: status)
                 } catch let error as NSError {
                     Self.logNSError(error, prefix: "decodedMessage: verify error")
@@ -520,8 +521,11 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
             // Encrypted (possibly also signed): decrypt.
             Task.detached {
                 do {
-                    let (plaintext, status) = try await GPGService.shared.decrypt(data: data)
+                    let (plaintext, rawStatus) = try await GPGService.shared.decrypt(data: data)
                     log.debug("decodedMessage: decrypt succeeded")
+                    // Check against the envelope's From — that is the address
+                    // Mail displays, and therefore the claim being made.
+                    let status = Self.checkSignerMatchesSender(rawStatus, messageData: data)
                     // Check for protected subject (RFC 3156 / Memory Hole):
                     // if the outer subject is a placeholder like "..." and the
                     // decrypted message has a real subject, show it via banner.
@@ -565,6 +569,51 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     /// - Parameter wasEncrypted: `true` when returning decrypted plaintext,
     ///   so `MEMessageSecurityInformation.isEncrypted` is set correctly even
     ///   when the status isn't `.encrypted` (e.g. `.signed` after decrypt).
+    /// Bare address out of a raw `From:` header value.
+    /// "Ravi <ravi@example.com>" and "ravi@example.com" both yield the address.
+    private nonisolated static func bareEmail(inHeaderValue value: String) -> String {
+        let first = value.components(separatedBy: ",").first ?? value
+        if let lt = first.firstIndex(of: "<"), let gt = first.lastIndex(of: ">"), lt < gt {
+            return String(first[first.index(after: lt)..<gt])
+                .trimmingCharacters(in: .whitespaces).lowercased()
+        }
+        return first.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
+    /// A valid signature proves someone held a private key. It does not prove
+    /// that someone is the sender. Mail renders any verified signature as a
+    /// signed badge, so without this check a message claiming to come from your
+    /// bank, signed by a key its author generated ten minutes ago, reads as
+    /// authenticated — the signer's address is shown, but as small print beside
+    /// a reassuring badge.
+    ///
+    /// When the signing key's address is not the one the message claims to come
+    /// from, the signature is reported as invalid with both addresses named.
+    /// Encryption status is unaffected: `makeDecodedMessage` still marks the
+    /// message encrypted via `wasEncrypted`, so only the signature badge drops.
+    nonisolated static func checkSignerMatchesSender(_ status: SecurityStatus,
+                                                     messageData: Data) -> SecurityStatus {
+        let signers: [Signer]
+        switch status {
+        case .signed(let s), .encrypted(let s): signers = s
+        default: return status
+        }
+        guard !signers.isEmpty else { return status }
+
+        guard let fromHeader = headerValue("from", in: messageData) else { return status }
+        let from = bareEmail(inHeaderValue: decodeMIMEWords(fromHeader))
+        guard !from.isEmpty else { return status }
+
+        if signers.contains(where: { $0.email.lowercased() == from }) { return status }
+
+        let named = signers.map(\.email).filter { !$0.isEmpty }
+        let signerList = named.isEmpty ? "an unidentified key" : named.joined(separator: ", ")
+        log.error("signer/sender mismatch — signature will be reported as invalid")
+        return .signatureInvalid(
+            reason: "Signed by \(signerList), but this message claims to be from \(from). "
+                  + "The signature does not authenticate the sender.")
+    }
+
     static nonisolated func makeDecodedMessage(data: Data, status: SecurityStatus, wasEncrypted: Bool = false, banner: MEDecodedMessageBanner? = nil) -> MEDecodedMessage? {
         let meSigners: [MEMessageSigner] = {
             switch status {
