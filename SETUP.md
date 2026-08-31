@@ -198,15 +198,48 @@ ID and whether the key is verified, instead of a green "Key found" that looked
 identical for a key you checked in person and one fetched off a keyserver two
 seconds ago.
 
-Three findings from the review are **not** fixed here, because each needs
-changes I could not compile-check:
+All seven findings from the review are now fixed. The remaining four:
 
-- Status parsing reads `[GNUPG:]` lines out of stderr, which also carries
-  attacker-chosen UID text. The fix is a dedicated status fd, which means
-  changing the `gpg()` subprocess helper.
-- BCC recipients are disclosed to everyone via their key IDs. The fix needs a
-  separate hidden-recipient list threaded through the XPC protocol.
-- Subject lines are never encrypted on send, though the decode path already
-  understands protected headers.
+**Status parsing** (`GPGServiceImpl.swift`) — `decrypt` tested stderr for
+`[GNUPG:] DECRYPTION_OKAY` and `verify` concatenated stdout and stderr before
+looking for `GOODSIG`. GPG's human-readable output echoes user ID strings,
+which are chosen by whoever made the key, so a crafted UID could forge a
+verdict. `gpgWithStatus()` now writes status to a private 0600 file and parses
+only that. The human-readable fallback is gone.
 
-Once you have a green build, those are the next three commits.
+**Signer identity** (`MessageSecurityHandler.swift`) — a valid signature from
+any key rendered as signed, with no check that the signing key belongs to the
+From address. Mismatches are now reported as an invalid signature naming both
+addresses. Encryption status is unaffected.
+
+**BCC disclosure** (XPC protocol, `GPGServiceImpl.swift`) — every recipient
+fingerprint became a `--recipient`, and OpenPGP stamps a readable key ID per
+recipient into the packet, so the To line learned who was blind-copied. BCC
+addresses now go through `--hidden-recipient`.
+
+**Protected subjects** (`GPGServiceImpl+MIME.swift`) — the Subject can now
+travel inside the encrypted entity, with the outer one replaced by the `...`
+placeholder the decode path already recognised. **Off by default**, with a
+"Hide subject line" toggle in the compose panel: recipients whose client does
+not implement protected headers see `...` and no explanation.
+
+## Testing the four
+
+Signer mismatch is the one worth exercising deliberately, since it changes what
+you see on legitimate mail if an address is missing from a key. Send yourself a
+signed message from each account and confirm both still verify. If one now
+reports an invalid signature, the signing key lacks that address as a UID — add
+it with `gpg --edit-key <fpr>` then `adduid`, rather than reverting the check.
+
+For BCC, send an encrypted message to one address with another in BCC, then
+inspect the packet from the recipient's side:
+
+```bash
+gpg --list-packets < message.asc | grep -A1 "pubkey enc packet"
+```
+
+The blind recipient should appear as keyid `0000000000000000`.
+
+For protected subjects, turn the toggle on, send to yourself, and confirm the
+outer subject reads `...` in the raw source while Mail displays the real one in
+a banner.
