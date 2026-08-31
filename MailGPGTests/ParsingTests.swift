@@ -324,6 +324,43 @@ final class ParsingTests: XCTestCase {
         else { XCTFail("Expected .signatureInvalid for unrecognised output, got \(status)") }
     }
 
+    // MARK: - revoked / expired signing keys
+
+    func testParseVerifyStatus_revokedKeyIsNotAValidSignature() {
+        // GPG emits REVKEYSIG in place of GOODSIG. Without an explicit branch
+        // this fell through to the generic "no valid signature", which hides
+        // the much stronger fact that the owner revoked the key.
+        let status = svc.parseVerifyStatus(
+            status: "[GNUPG:] REVKEYSIG DEADBEEFDEADBEEF Alice <alice@example.com>")
+        if case .signatureInvalid(let reason) = status {
+            XCTAssertTrue(reason.lowercased().contains("revoked"), "got: \(reason)")
+        } else {
+            XCTFail("Expected .signatureInvalid for a revoked key, got \(status)")
+        }
+    }
+
+    func testParseVerifyStatus_expiredKeyIsNotAValidSignature() {
+        let status = svc.parseVerifyStatus(
+            status: "[GNUPG:] EXPKEYSIG DEADBEEFDEADBEEF Alice <alice@example.com>")
+        if case .signatureInvalid(let reason) = status {
+            XCTAssertTrue(reason.lowercased().contains("expired"), "got: \(reason)")
+        } else {
+            XCTFail("Expected .signatureInvalid for an expired key, got \(status)")
+        }
+    }
+
+    func testParseDecryptStatus_revokedSigningKeyInsideEncryptedMessage() {
+        let status = svc.parseDecryptStatus(status: """
+            [GNUPG:] DECRYPTION_OKAY
+            [GNUPG:] REVKEYSIG DEADBEEFDEADBEEF Alice <alice@example.com>
+            """)
+        if case .signatureInvalid(let reason) = status {
+            XCTAssertTrue(reason.lowercased().contains("revoked"), "got: \(reason)")
+        } else {
+            XCTFail("Expected .signatureInvalid for a revoked key, got \(status)")
+        }
+    }
+
     // MARK: - extractFromEmail
 
     func testExtractFromEmail_angleFormat() {

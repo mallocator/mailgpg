@@ -133,6 +133,22 @@ extension GPGServiceImpl {
                 let p = line.components(separatedBy: " ")
                 let keyID = p.count >= 3 ? p[2] : "unknown"
                 return .signatureInvalid(reason: "Bad signature from key \(keyID)")
+            } else if line.contains("[GNUPG:] REVKEYSIG") {
+                // The maths checked out, but the signer revoked this key. GPG
+                // emits this instead of GOODSIG, so without an explicit branch
+                // it reads as "no signature" — far weaker than what happened.
+                let p = line.components(separatedBy: " ")
+                let keyID = p.count >= 3 ? p[2] : "unknown"
+                return .signatureInvalid(
+                    reason: "Signed with key \(keyID), which its owner has revoked. "
+                          + "Treat this signature as worthless.")
+            } else if line.contains("[GNUPG:] EXPKEYSIG") {
+                let p = line.components(separatedBy: " ")
+                let keyID = p.count >= 3 ? p[2] : "unknown"
+                return .signatureInvalid(
+                    reason: "Signed with key \(keyID), which has expired.")
+            } else if line.contains("[GNUPG:] EXPSIG") {
+                return .signatureInvalid(reason: "The signature itself has expired.")
             } else if line.contains("[GNUPG:] NO_PUBKEY") {
                 let p = line.components(separatedBy: " ")
                 let keyID = p.count >= 3 ? p[2] : "unknown"
@@ -173,6 +189,19 @@ extension GPGServiceImpl {
                 let p = line.components(separatedBy: " ")
                 let kid = p.count >= 3 ? p[2] : "unknown"
                 return .signatureInvalid(reason: "Bad signature from key \(kid)")
+            } else if line.contains("[GNUPG:] REVKEYSIG") {
+                let p = line.components(separatedBy: " ")
+                let kid = p.count >= 3 ? p[2] : "unknown"
+                return .signatureInvalid(
+                    reason: "Signed with key \(kid), which its owner has revoked. "
+                          + "Treat this signature as worthless.")
+            } else if line.contains("[GNUPG:] EXPKEYSIG") {
+                let p = line.components(separatedBy: " ")
+                let kid = p.count >= 3 ? p[2] : "unknown"
+                return .signatureInvalid(
+                    reason: "Signed with key \(kid), which has expired.")
+            } else if line.contains("[GNUPG:] EXPSIG") {
+                return .signatureInvalid(reason: "The signature itself has expired.")
             } else if line.contains("[GNUPG:] NO_PUBKEY") {
                 let p = line.components(separatedBy: " ")
                 let kid = p.count >= 3 ? p[2] : "unknown"
