@@ -264,6 +264,34 @@ the outgoing header never appears, check the raw source of a sent message for an
 `Autocrypt:` line — a very long unfolded header is the most likely thing for
 Mail to mangle, and folding it is the first thing to try.
 
+## When PGP is offered at all
+
+Signing and encryption used to be offered on every message the moment the host
+app was running. That is how a signed message reaches someone whose client
+renders it as a cryptic attachment, and how mail gets encrypted to a key its
+owner abandoned years ago.
+
+An extension cannot turn the padlock on — `MEOutgoingMessageEncodingStatus`
+reports capability and `composeContext.shouldEncrypt` is read-only — but it can
+withhold the option. Signing is now offered only to addresses with evidence of
+PGP use, and encryption only when they also have a usable key.
+
+Evidence is use, not publication: mail they sent carrying PGP or an Autocrypt
+header, mail you successfully encrypted to them before, or a key you verified
+yourself in Manage Keys. A published key on its own proves nothing — anyone can
+publish one, and a forgotten ten-year-old key looks exactly like a live one.
+
+To start with someone who has never written to you, verify their key in Manage
+Keys. To turn the whole policy off, untick "Only offer PGP to known
+correspondents" in the compose panel.
+
+Worth an experiment once this is running: address a message to someone with
+evidence and a key, and see whether Mail enables the sign and encrypt buttons on
+its own. It does exactly that for S/MIME when a certificate is available. If it
+behaves the same way for MailKit extensions, this policy delivers automatic
+encryption for the people it should apply to, without the extension ever
+choosing it.
+
 ## Testing the four
 
 Signer mismatch is the one worth exercising deliberately, since it changes what
