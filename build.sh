@@ -30,7 +30,13 @@ if security find-identity -v -p codesigning | grep -q "Developer ID Application"
              CODE_SIGN_IDENTITY="Developer ID Application")
   echo "Using: Developer ID Application"
 else
-  SIGN_ARGS=(-configuration Release CODE_SIGN_STYLE=Automatic)
+  # The Release config pins Developer ID provisioning profiles, which conflict
+  # with automatic signing. Clear them explicitly — an empty specifier is what
+  # tells Xcode "let automatic signing choose".
+  SIGN_ARGS=(-configuration Release CODE_SIGN_STYLE=Automatic \
+             PROVISIONING_PROFILE_SPECIFIER="" \
+             PROVISIONING_PROFILE="" \
+             CODE_SIGN_IDENTITY="Apple Development")
   echo "Using: automatic signing (Apple Development)"
 fi
 
@@ -50,6 +56,24 @@ BUILT="$DERIVED/Build/Products/Release/MailGPG.app"
 
 say "Verifying signature and entitlements"
 codesign -dv --verbose=4 "$BUILT" 2>&1 | grep -E "Identifier|TeamIdentifier|Authority" || true
+
+# The XPC gate in GPGServiceListener.swift pins the caller's team ID. If the
+# certificate that actually signed this build belongs to a different team, the
+# extension will be refused by the host app and every GPG operation fails with
+# a confusing "host app not running". Catch that here rather than in Mail.
+ACTUAL_TEAM=$(codesign -dv --verbose=4 "$BUILT" 2>&1 | awk -F= '/^TeamIdentifier/{print $2}')
+PINNED_TEAM=$(grep -o 'subject.OU\] = "[A-Z0-9]*"' MailGPG/GPGServiceListener.swift | grep -o '"[A-Z0-9]*"' | tr -d '"')
+if [ -n "$ACTUAL_TEAM" ] && [ "$ACTUAL_TEAM" != "$PINNED_TEAM" ]; then
+  echo
+  echo "ERROR: signed by team '$ACTUAL_TEAM' but GPGServiceListener.swift pins '$PINNED_TEAM'."
+  echo "The extension would be refused by the host app. Fix it with:"
+  echo
+  echo "  sed -i '' 's/$PINNED_TEAM/$ACTUAL_TEAM/' MailGPG/GPGServiceListener.swift"
+  echo "  ./build.sh"
+  echo
+  exit 1
+fi
+echo "Team ID check: signed by $ACTUAL_TEAM, pinned $PINNED_TEAM — match"
 codesign -d --entitlements - "$BUILT" 2>/dev/null | head -20 || true
 
 say "Installing to $APP_PATH"
