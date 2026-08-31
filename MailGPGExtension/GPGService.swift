@@ -387,17 +387,32 @@ actor GPGService {
         Self.defaults?.set(map, forKey: Self.pgpReceivedDefault)
     }
 
+    private static let wkdKeysDefault = "wkdKeyForAddress"
+
+    /// Note that this address publishes a key through Web Key Directory.
+    nonisolated func recordWKDKey(for email: String) {
+        let key = email.lowercased()
+        var map = (Self.defaults?.dictionary(forKey: Self.wkdKeysDefault) as? [String: Date]) ?? [:]
+        if let seen = map[key], Calendar.current.isDateInToday(seen) { return }
+        map[key] = Date()
+        Self.defaults?.set(map, forKey: Self.wkdKeysDefault)
+    }
+
     /// Whether this address has ever demonstrated it can handle PGP.
     ///
-    /// A published key is not evidence — anyone can publish one, and a key from
-    /// ten years ago that its owner has forgotten looks identical to a live one.
-    /// Evidence is use: mail they sent with PGP on it, or mail we successfully
-    /// encrypted to them before.
+    /// A key on a keyserver is not evidence — anyone can upload one, nothing
+    /// ever expires off, and a key its owner forgot ten years ago looks exactly
+    /// like a live one. A key served from the recipient's own domain by Web Key
+    /// Directory is different: someone maintains that publication today.
+    ///
+    /// Evidence is therefore: mail they sent with PGP on it, mail we
+    /// successfully encrypted to them before, or a key published via WKD.
     nonisolated func hasPGPEvidence(for email: String) -> Bool {
         let key = email.lowercased()
         let sent = Self.defaults?.dictionary(forKey: Self.encryptedSendsDefault) as? [String: Date]
         let recv = Self.defaults?.dictionary(forKey: Self.pgpReceivedDefault) as? [String: Date]
-        return sent?[key] != nil || recv?[key] != nil
+        let wkd  = Self.defaults?.dictionary(forKey: Self.wkdKeysDefault) as? [String: Date]
+        return sent?[key] != nil || recv?[key] != nil || wkd?[key] != nil
     }
 
     /// Whether signing and encryption are offered only for addresses with

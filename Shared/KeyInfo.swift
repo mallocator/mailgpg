@@ -46,6 +46,13 @@ struct KeyInfo: Codable, Identifiable, Equatable {
     /// A revoked key must not be used for encryption or signing.
     let isRevoked: Bool
 
+    /// True when this key was found through Web Key Directory — served over
+    /// HTTPS from the recipient's own mail domain, at a path derived from their
+    /// address. That means whoever runs their mail publishes this key for this
+    /// address today, which is a live statement about the address rather than
+    /// something a stranger uploaded once and nobody ever removed.
+    var viaWKD: Bool = false
+
     // `Identifiable` — SwiftUI needs a stable `id` property.
     var id: String { fingerprint }
 }

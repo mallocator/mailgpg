@@ -129,6 +129,7 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
                     // up for an address — including one that replaced the key
                     // you used last week. Remember the fingerprint per address
                     // and refuse silently swapping it.
+                    if key.viaWKD { GPGService.shared.recordWKDKey(for: email) }
                     let pinned = GPGService.shared.pinnedFingerprint(for: email)
                     if let pinned, pinned != key.fingerprint, !key.trusted {
                         keyStatus[email] = .keyChanged

@@ -48,18 +48,35 @@ extension GPGServiceImpl {
                 return key
             }
 
-            // ── Steps 2+3: WKD + keyservers by email ──────────────────────
-            // --locate-keys finds a key by e-mail address and auto-imports it.
-            // --auto-key-locate: wkd (Web Key Directory) is tried first on the
-            //   primary keyserver, then each keyserver is tried individually.
+            // ── Step 2: Web Key Directory, on its own ─────────────────────
+            // Run separately from the keyservers rather than as one combined
+            // --auto-key-locate list, so the caller can tell WKD apart. A WKD
+            // hit says the recipient's own mail domain publishes this key for
+            // this address right now; a keyserver hit says only that somebody
+            // uploaded it at some point.
+            let (wkdOut, _, wkdCode) = try gpg([
+                "--locate-keys",
+                "--auto-key-locate", "wkd",
+                "--keyserver-options", "timeout=10",
+                "--no-auto-check-trustdb",
+                "--with-colons", "--fixed-list-mode",
+                email
+            ])
+            if wkdCode == 0, var key = firstUsable(
+                parseColonOutput(String(data: wkdOut, encoding: .utf8) ?? "", wantSecretKeys: false)) {
+                key.viaWKD = true
+                log.info("resolveKey: found via WKD")
+                return key
+            }
+
+            // ── Step 3: keyservers by email ───────────────────────────────
             // --keyserver-options timeout=10: don't block indefinitely.
             // --no-auto-check-trustdb: skip trust-DB rebuild (~1 s saved).
-            for (i, ks) in keyservers.enumerated() {
-                let autoLocate = i == 0 ? "wkd,keyserver" : "keyserver"
+            for ks in keyservers {
                 let (out, _, code) = try gpg([
                     "--keyserver", ks,
                     "--locate-keys",
-                    "--auto-key-locate", autoLocate,
+                    "--auto-key-locate", "keyserver",
                     "--keyserver-options", "timeout=10",
                     "--no-auto-check-trustdb",
                     "--with-colons", "--fixed-list-mode",
