@@ -257,7 +257,11 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
               reply: @escaping (Data?, Error?) -> Void) {
         log.info("sign: dataSize=\(data.count)")
         do {
-            let signerKeyID = try validatedKeyIdentifier(signerKeyID, fieldName: "signer key ID")
+            // Full fingerprint only. A short key ID is 8 hex digits, which is
+            // cheap to collide deliberately, and --local-user resolving to the
+            // wrong key would sign mail as somebody else.
+            let signerKeyID = try validatedKeyIdentifier(
+                signerKeyID, fieldName: "signer key ID", allowShort: false)
             if gnupgHome == nil { try GPGAgent.ensureRunning() }
             let (rawHeaders, body) = splitMessage(data)
 
@@ -330,7 +334,8 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
                         hiddenRecipientFingerprints: [String],
                         reply: @escaping (Data?, Error?) -> Void) {
         do {
-            let signerKeyID = try validatedKeyIdentifier(signerKeyID, fieldName: "signer key ID")
+            let signerKeyID = try validatedKeyIdentifier(
+                signerKeyID, fieldName: "signer key ID", allowShort: false)
             let recipientFingerprints = try recipientFingerprints.map {
                 try validatedKeyIdentifier($0, fieldName: "recipient fingerprint", allowShort: false)
             }

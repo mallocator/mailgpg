@@ -389,7 +389,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                         log.info("encode: sign+encrypt to \(encryptFingerprints.count) recipient(s), \(hiddenFingerprints.count) hidden")
                         encodedData = MEEncodedOutgoingMessage(
                             rawData: try await GPGService.shared.signAndEncrypt(
-                                data: body, signerKeyID: signerKey.keyID,
+                                data: body, signerKeyID: signerKey.fingerprint,
                                 recipientFingerprints: encryptFingerprints,
                                 hiddenRecipientFingerprints: hiddenFingerprints),
                             isSigned: true, isEncrypted: true)
@@ -397,7 +397,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                     } else {
                         encodedData = MEEncodedOutgoingMessage(
                             rawData: try await GPGService.shared.sign(
-                                data: body, signerKeyID: signerKey.keyID),
+                                data: body, signerKeyID: signerKey.fingerprint),
                             isSigned: true, isEncrypted: false)
                         log.info("encode: sign succeeded")
                     }

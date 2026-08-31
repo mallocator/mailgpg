@@ -29,6 +29,16 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
         prepareAutocryptHeader(for: session, state: state)
     }
 
+    /// Base64 broken into continuation lines: CRLF followed by a space, which
+    /// is how RFC 5322 folds a long header value. Receivers strip the folding
+    /// before decoding — our own parser drops whitespace for the same reason.
+    private static func foldedBase64(_ data: Data, width: Int = 72) -> String {
+        let encoded = Array(data.base64EncodedString())
+        return stride(from: 0, to: encoded.count, by: width)
+            .map { String(encoded[$0..<min($0 + width, encoded.count)]) }
+            .joined(separator: "\r\n ")
+    }
+
     /// Build this session's Autocrypt header ahead of time.
     ///
     /// `additionalHeaders` has to answer synchronously and GPG lives across an
@@ -55,8 +65,14 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
                 // prefer-encrypt=nopreference, not mutual: MailKit gives an
                 // extension no way to turn encryption on by itself, so claiming
                 // we encrypt by default would be a promise we cannot keep.
-                let header = "addr=\(sender); prefer-encrypt=nopreference; "
-                           + "keydata=\(keyData.base64EncodedString())"
+                //
+                // The keydata must be folded. RFC 5322 caps a header line at
+                // 998 octets, and base64 of a minimal key runs to 800 for
+                // ed25519 and about 1250 for RSA-3072 — so an unfolded header
+                // is over the hard limit for most real keys, not merely over
+                // the 78-octet recommendation.
+                let header = "addr=\(sender); prefer-encrypt=nopreference;\r\n"
+                           + " keydata=" + Self.foldedBase64(keyData)
                 await MainActor.run { state.autocryptHeader = header }
                 log.info("autocrypt: header prepared (\(keyData.count) key bytes)")
             } catch {
