@@ -41,6 +41,8 @@ else
 fi
 
 say "Building"
+BUILD_LOG="$DERIVED/build.log"
+set +e
 xcodebuild \
   -project MailGPG.xcodeproj \
   -scheme MailGPG \
@@ -49,7 +51,22 @@ xcodebuild \
   DEVELOPMENT_TEAM="$TEAM_ID" \
   "${SIGN_ARGS[@]}" \
   -allowProvisioningUpdates \
-  build
+  build > "$BUILD_LOG" 2>&1
+BUILD_STATUS=$?
+set -e
+
+if [ $BUILD_STATUS -ne 0 ]; then
+  echo
+  echo "Build failed. Diagnostics:"
+  echo "------------------------------------------------------------"
+  # xcodebuild prints the useful lines as path:line:col: error: message,
+  # then repeats a wall of command lines at the end. Show only the former.
+  grep -E "^/.*:[0-9]+:[0-9]+: (error|warning):" "$BUILD_LOG" | sort -u | head -60
+  echo "------------------------------------------------------------"
+  echo "Full log kept at: $BUILD_LOG"
+  echo "(that directory is not cleaned up on failure)"
+  exit 1
+fi
 
 BUILT="$DERIVED/Build/Products/Release/MailGPG.app"
 [ -d "$BUILT" ] || { echo "Build produced no app at $BUILT"; exit 1; }
