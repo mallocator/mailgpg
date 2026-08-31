@@ -18,7 +18,9 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     /// with slightly different rawData each time; the UUID is what makes those
     /// calls recognisable as one message, and only the first should hit GPG.
     ///
-    /// `decodeCache` is keyed by a hash of the message bytes. It used to share
+    /// `decodeCache` is keyed by a hash of the message bytes, and only PGP
+    /// messages ever reach it — see `decodedMessage` on why detection comes
+    /// before hashing. It used to share
     /// the UUID/Message-Id key, which is wrong twice over: those headers are not
     /// unique in practice (a reply carries the original's identifiers around),
     /// and they are attacker-controlled. A collision made Mail render one
@@ -28,9 +30,11 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     /// header the worst case is a cache miss and a real decrypt.
     private var encodeCache: [String: MEMessageEncodingResult] = [:]
     private var decodeCache: [String: MEDecodedMessage] = [:]
-    /// Content hashes of messages that carry no PGP content, so plaintext mail
-    /// does not pay for a re-scan on every one of Mail's repeated calls.
-    private var notOursCache: Set<String> = []
+    /// Keys of `decodeCache`, oldest first. Entries hold decrypted plaintext, so
+    /// the cache is bounded on both counts: unbounded growth would keep every
+    /// message you ever opened in memory, in the clear, until Mail quit.
+    private var decodeCacheOrder: [String] = []
+    private static let decodeCacheLimit = 24
 
     /// Serializes access to all three. Mail calls decodedMessage() from multiple
     /// threads concurrently — without a lock they all miss the cache and start
@@ -68,19 +72,13 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
     private func storeDecodedMessage(_ decoded: MEDecodedMessage, for key: String) {
         cacheLock.lock()
+        if decodeCache[key] == nil {
+            decodeCacheOrder.append(key)
+            while decodeCacheOrder.count > Self.decodeCacheLimit {
+                decodeCache.removeValue(forKey: decodeCacheOrder.removeFirst())
+            }
+        }
         decodeCache[key] = decoded
-        cacheLock.unlock()
-    }
-
-    private func isCachedNotMailGPGContent(for key: String) -> Bool {
-        cacheLock.lock()
-        defer { cacheLock.unlock() }
-        return notOursCache.contains(key)
-    }
-
-    private func storeNotMailGPGContent(for key: String) {
-        cacheLock.lock()
-        notOursCache.insert(key)
         cacheLock.unlock()
     }
 
@@ -88,7 +86,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         cacheLock.lock()
         encodeCache.removeAll()
         decodeCache.removeAll()
-        notOursCache.removeAll()
+        decodeCacheOrder.removeAll()
         cacheLock.unlock()
     }
 
@@ -459,19 +457,14 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     }
 
     func decodedMessage(forMessageData data: Data) -> MEDecodedMessage? {
-        // Key on the message content itself. Header-derived keys collide —
-        // see the note on decodeCache above.
-        let cacheKey = Self.contentKey(data)
-
-        if let cached = cachedDecodedMessage(for: cacheKey) {
-            log.debug("decodedMessage: cache hit (\(data.count) bytes)")
-            return cached
-        }
-        if isCachedNotMailGPGContent(for: cacheKey) {
-            log.debug("decodedMessage: negative cache hit (\(data.count) bytes)")
-            return nil
-        }
-
+        // Detection runs BEFORE hashing, and that order matters. Nearly every
+        // message Mail hands us is ordinary plaintext it is indexing; hashing
+        // each one in full to look it up in a cache it will never be in costs
+        // real CPU on a large mailbox, and a negative cache to avoid the rescan
+        // would then grow one entry per message, forever. Detection is a header
+        // scan plus two byte searches, so non-PGP mail leaves here having paid
+        // almost nothing and having stored nothing.
+        //
         // Quick pre-check: only process messages that look like PGP content.
         // Returning nil for everything else tells Mail "not my message" and avoids:
         //   - unnecessary XPC round-trips for plaintext mail
@@ -498,8 +491,15 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
         guard isEncrypted || isSigned else {
             log.debug("decodedMessage: not encrypted or signed — returning nil")
-            storeNotMailGPGContent(for: cacheKey)
             return nil
+        }
+
+        // Only PGP messages get hashed and cached. The key is the content
+        // itself; header-derived keys collide — see the note on decodeCache.
+        let cacheKey = Self.contentKey(data)
+        if let cached = cachedDecodedMessage(for: cacheKey) {
+            log.debug("decodedMessage: cache hit (\(data.count) bytes)")
+            return cached
         }
 
         // MailKit requires this method to be synchronous, but our GPG calls are async.
