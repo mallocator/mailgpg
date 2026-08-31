@@ -287,7 +287,13 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 // Signing must use the key that belongs to the From address.
                 // Falling back to "whatever key is first in the keyring" signs
                 // outgoing mail with an unrelated identity, silently.
-                let signerKey = usable.first(where: { $0.email.lowercased() == senderEmail })
+                //
+                // Several keys can carry the same address — an old one you have
+                // stopped using alongside your current one. GPG lists them in no
+                // order you should rely on, so pick the most recently created.
+                let signerKey = usable
+                    .filter { $0.email.lowercased() == senderEmail }
+                    .max { ($0.createdAt ?? .distantPast) < ($1.createdAt ?? .distantPast) }
                 if signerKey == nil {
                     log.error("encode: no secret key matches the From address")
                 }

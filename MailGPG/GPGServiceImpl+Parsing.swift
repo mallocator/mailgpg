@@ -25,6 +25,7 @@ extension GPGServiceImpl {
         var validity   = ""   // field[1]: calculated key validity — used only for isRevoked
         var ownertrust = ""   // field[8]: explicitly-set owner trust — source of TrustLevel
         var expiry     = ""
+        var created    = ""
 
         for raw in output.components(separatedBy: "\n") {
             let line = raw.hasSuffix("\r") ? String(raw.dropLast()) : raw
@@ -40,6 +41,7 @@ extension GPGServiceImpl {
                 validity    = f.count > 1 ? f[1] : ""
                 ownertrust  = f.count > 8 ? f[8] : ""
                 expiry      = f.count > 6 ? f[6] : ""
+                created     = f.count > 5 ? f[5] : ""   // colon field 6: creation date
                 fingerprint = ""
 
             case "pub" where wantSecretKeys:
@@ -57,6 +59,7 @@ extension GPGServiceImpl {
                 let kid = fp.count >= 8 ? String(fp.suffix(8)) : keyID
                 // GPG timestamps are Unix epoch strings; empty string means "no expiry".
                 let expiryDate: Date? = Double(expiry).map { Date(timeIntervalSince1970: $0) }
+                let createdDate: Date? = Double(created).map { Date(timeIntervalSince1970: $0) }
                 // GPG ownertrust field uses 'n' (not trusted) which has no direct rawValue
                 // in TrustLevel — map it to .none explicitly.
                 let trust: TrustLevel = ownertrust == "n" ? .none
@@ -72,6 +75,7 @@ extension GPGServiceImpl {
                     validity:    validityLevel,
                     hasSecretKey: wantSecretKeys,
                     expiresAt:   expiryDate,
+                    createdAt:   createdDate,
                     isRevoked:   validity == "r"
                 ))
                 inKey = false  // take only the first uid per primary key

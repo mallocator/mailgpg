@@ -37,6 +37,11 @@ struct KeyInfo: Codable, Identifiable, Equatable {
     /// Expiry date, or `nil` if the key never expires.
     let expiresAt: Date?
 
+    /// When the key was created. Used to pick the newest key when several
+    /// carry the same address — an old key you no longer use should not win a
+    /// coin toss against your current one.
+    let createdAt: Date?
+
     /// Whether this key has been revoked by its owner.
     /// A revoked key must not be used for encryption or signing.
     let isRevoked: Bool

@@ -324,6 +324,23 @@ final class ParsingTests: XCTestCase {
         else { XCTFail("Expected .signatureInvalid for unrecognised output, got \(status)") }
     }
 
+    // MARK: - key creation date
+
+    func testParseColonOutput_capturesCreationDate() {
+        // Colon field 6 is the creation date as a Unix timestamp.
+        // 1300000000 = 2011-03-13.
+        let out = """
+        pub:u:255:22:AAAABBBBCCCCDDDD:1300000000::::::scESC::::::23::0:
+        fpr:::::::::AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBCCCC:
+        uid:u::::1300000000::ABC::Alice <alice@example.com>::::::::::0:
+        """
+        guard let key = svc.parseColonOutput(out, wantSecretKeys: false).first else {
+            return XCTFail("Expected one key")
+        }
+        XCTAssertEqual(key.createdAt, Date(timeIntervalSince1970: 1300000000))
+        XCTAssertNil(key.expiresAt, "No expiry field set, so expiresAt should be nil")
+    }
+
     // MARK: - revoked / expired signing keys
 
     func testParseVerifyStatus_revokedKeyIsNotAValidSignature() {
