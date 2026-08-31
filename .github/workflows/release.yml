@@ -194,26 +194,26 @@ jobs:
             ## Installation
 
             ```bash
-            brew install --cask mahaupt/mailgpg/mailgpg
+            brew install --cask mallocator/mailgpg/mailgpg
             ```
 
             Alternative install without Homebrew `gnupg` / `pinentry-mac` dependencies:
 
             ```bash
-            brew install --cask mahaupt/mailgpg/mailgpg-nodeps
+            brew install --cask mallocator/mailgpg/mailgpg-nodeps
             ```
 
             **SHA256:** `${{ env.SHA256 }}`
           files: ${{ env.DMG_PATH }}
 
       # ── Update Homebrew tap ──────────────────────────────────────────────────
-      # Pushes directly to main on the mahaupt/homebrew-mailgpg tap repository,
+      # Pushes directly to main on the mallocator/homebrew-mailgpg tap repository,
       # updating the cask formula to the new version and SHA256.
       - name: Update Homebrew tap
         env:
           TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
-          git clone https://x-access-token:$TAP_TOKEN@github.com/mahaupt/homebrew-mailgpg.git "$RUNNER_TEMP/tap"
+          git clone https://x-access-token:$TAP_TOKEN@github.com/mallocator/homebrew-mailgpg.git "$RUNNER_TEMP/tap"
           cd "$RUNNER_TEMP/tap"
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

@@ -1,6 +1,6 @@
 # Required GitHub Actions Secrets
 
-Configure these at: https://github.com/mahaupt/mailgpg/settings/secrets/actions
+Configure these at: https://github.com/mallocator/mailgpg/settings/secrets/actions
 
 | Secret | Description | How to get it |
 |--------|-------------|---------------|
@@ -11,7 +11,7 @@ Configure these at: https://github.com/mahaupt/mailgpg/settings/secrets/actions
 | `NOTARIZATION_PASSWORD` | App-specific password for notarytool | https://appleid.apple.com → Sign-In and Security → App-Specific Passwords |
 | `PROVISIONING_PROFILE_HOST_BASE64` | Developer ID provisioning profile for `net.pyxzl.MailGPG` | developer.apple.com → Profiles → + → macOS Developer ID, then `base64 -i file.provisionprofile \| pbcopy` |
 | `PROVISIONING_PROFILE_EXTENSION_BASE64` | Developer ID provisioning profile for `net.pyxzl.MailGPG.MailGPGExtension` | Same as above for the extension bundle ID |
-| `TAP_TOKEN` | GitHub Personal Access Token with repo write access to mahaupt/homebrew-mailgpg | GitHub → Settings → Developer Settings → Personal Access Tokens (classic), scopes: `repo` |
+| `TAP_TOKEN` | GitHub Personal Access Token with repo write access to mallocator/homebrew-mailgpg | GitHub → Settings → Developer Settings → Personal Access Tokens (classic), scopes: `repo` |
 
 ## Triggering a release
 
@@ -26,10 +26,10 @@ The pipeline will:
 3. Package as DMG
 4. Notarize + staple
 5. Create a GitHub Release with the DMG attached
-6. Open a PR on mahaupt/homebrew-mailgpg updating version + SHA256
+6. Open a PR on mallocator/homebrew-mailgpg updating version + SHA256
 
 ## One-time setup: create the Homebrew tap repo
 
-1. Create a new GitHub repo named `homebrew-mailgpg` under `mahaupt`
+1. Create a new GitHub repo named `homebrew-mailgpg` under `mallocator`
 2. Copy `.github/homebrew/mailgpg.rb` to `Casks/mailgpg.rb` in that repo
-3. Users can then install with: `brew install --cask mahaupt/mailgpg/mailgpg`
+3. Users can then install with: `brew install --cask mallocator/mailgpg/mailgpg`

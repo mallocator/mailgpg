@@ -1,15 +1,15 @@
-# This file is the initial template for the mahaupt/homebrew-mailgpg tap.
-# Copy it to: mahaupt/homebrew-mailgpg/Casks/mailgpg-nodeps.rb
+# This file is the initial template for the mallocator/homebrew-mailgpg tap.
+# Copy it to: mallocator/homebrew-mailgpg/Casks/mailgpg-nodeps.rb
 # Version and sha256 are updated automatically by the release GitHub Action.
 
 cask "mailgpg-nodeps" do
   version "1.0.0"
   sha256 "placeholder_updated_by_ci"
 
-  url "https://github.com/mahaupt/mailgpg/releases/download/v#{version}/MailGPG-#{version}.dmg"
+  url "https://github.com/mallocator/mailgpg/releases/download/v#{version}/MailGPG-#{version}.dmg"
   name "MailGPG"
   desc "Native macOS Mail extension for GPG email encryption and signing without Homebrew GPG dependencies"
-  homepage "https://github.com/mahaupt/mailgpg"
+  homepage "https://github.com/mallocator/mailgpg"
 
   # Minimum macOS version
   depends_on macos: :sonoma
