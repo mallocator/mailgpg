@@ -32,9 +32,25 @@ extension GPGServiceImpl {
     /// Returns the best usable key found, or `nil` if none was found.
     /// Keys are auto-imported by GPG on steps 2–4.
     func resolveKey(email: String? = nil, keyID: String? = nil) throws -> KeyInfo? {
+        // The parser emits one KeyInfo per user ID, and GPG lists user IDs
+        // newest-first rather than primary-first — so "the first entry" is an
+        // arbitrary address off the key. When we searched for an address,
+        // return the entry carrying THAT address, so a recipient reached at a
+        // key's second or third identity is reported under the address the
+        // caller asked about instead of under whichever identity happened to
+        // be added last.
         func firstUsable(_ keys: [KeyInfo]) -> KeyInfo? {
-            keys.first { !$0.isRevoked && ($0.expiresAt.map { $0 > Date() } ?? true) }
-                ?? keys.first { !$0.isRevoked }
+            let wanted = email?.lowercased()
+            func pick(_ candidates: [KeyInfo]) -> KeyInfo? {
+                if let wanted {
+                    if let exact = candidates.first(where: { $0.email.lowercased() == wanted }) {
+                        return exact
+                    }
+                }
+                return candidates.first
+            }
+            let live = keys.filter { !$0.isRevoked && ($0.expiresAt.map { $0 > Date() } ?? true) }
+            return pick(live) ?? pick(keys.filter { !$0.isRevoked })
         }
 
         let keyservers = currentKeyservers()

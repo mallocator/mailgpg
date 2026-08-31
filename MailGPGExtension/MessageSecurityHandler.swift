@@ -135,41 +135,57 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     /// Decide what to offer for this message.
     ///
     /// MailKit lets an extension say what it *can* do, never what Mail *will*
-    /// do — `composeContext.shouldSign` and `shouldEncrypt` are read-only. So
-    /// the only lever over "don't PGP this message" is to stop offering it.
+    /// do — `composeContext.shouldSign` and `shouldEncrypt` are read-only. Mail
+    /// does however derive the compose window's initial state from this answer,
+    /// so withholding an option is the only lever over "don't PGP this".
     ///
-    /// Offering both on every message is how a correspondent whose client has
-    /// no PGP support receives a signed message that reads as a cryptic
-    /// attachment, and how mail gets encrypted to a published key its owner
-    /// abandoned years ago. Both are worth avoiding by default.
+    /// The rule throughout: withhold on knowledge, never on ignorance. An
+    /// earlier version returned "not offered" whenever it lacked information —
+    /// before recipients were typed, before the asynchronous key lookup
+    /// finished — and the result was an extension that offered nothing at all,
+    /// ever. Every branch that cannot decide now offers both and says so in the
+    /// log.
     private func offerPolicy(for message: MEMessage) -> OfferPolicy {
+        let offerBoth = OfferPolicy(canSign: true, canEncrypt: true)
+
         guard GPGService.shared.getKnownCorrespondentsOnly() else {
-            return OfferPolicy(canSign: true, canEncrypt: true)
+            return offerBoth
         }
 
         let recipients = (message.toAddresses + message.ccAddresses + message.bccAddresses)
             .map(\.bareAddress)
             .filter { !$0.isEmpty }
 
-        // Nothing addressed yet. Answer "not offered" rather than "offered":
-        // Mail derives the compose window's initial sign and encrypt state from
-        // what we report here, so an optimistic answer while the To field is
-        // still empty latches both toggles on for a message that may end up
-        // addressed to someone who cannot read either.
         guard !recipients.isEmpty else {
-            return OfferPolicy(canSign: false, canEncrypt: false)
+            log.info("offer: no recipients yet — offering both")
+            return offerBoth
         }
 
-        let state = sessionState(for: message)
-        // Verifying someone's key in Manage Keys is a deliberate act and counts
-        // as evidence — otherwise there is no way to start writing encrypted
-        // mail to someone who has never written to you.
+        guard let state = sessionState(for: message) else {
+            log.info("offer: no compose state for this message — offering both")
+            return offerBoth
+        }
+
+        // Recipient key lookup is asynchronous. Until every address has been
+        // resolved one way or the other we do not know enough to withhold.
+        let unresolved = recipients.filter {
+            let status = state.recipientKeyStatus[$0]
+            return status == nil || status == .loading
+        }
+        guard unresolved.isEmpty else {
+            log.info("offer: \(unresolved.count) recipient(s) still resolving — offering both")
+            return offerBoth
+        }
+
         let known = recipients.allSatisfy { email in
             GPGService.shared.hasPGPEvidence(for: email)
-                || (state?.recipientKeys[email]?.trusted ?? false)
+                // Holding their public key already is itself a relationship: it
+                // got into the keyring because you imported it or exchanged mail.
+                || state.recipientKeys[email] != nil
         }
-        let haveKeys = recipients.allSatisfy { state?.recipientKeyStatus[$0] == .found }
+        let haveKeys = recipients.allSatisfy { state.recipientKeyStatus[$0] == .found }
 
+        log.info("offer: recipients=\(recipients.count) known=\(known) haveKeys=\(haveKeys)")
         return OfferPolicy(canSign: known, canEncrypt: known && haveKeys)
     }
 

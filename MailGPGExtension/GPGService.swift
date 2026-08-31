@@ -416,9 +416,14 @@ actor GPGService {
     }
 
     /// Whether signing and encryption are offered only for addresses with
-    /// evidence of PGP use. On by default.
+    /// evidence of PGP use.
+    ///
+    /// Off by default. The policy withholds a working feature on the strength
+    /// of a judgement about someone else's mail client, so it should be a
+    /// choice rather than something that quietly happens to you — and when it
+    /// misjudges, the symptom is an extension that appears broken.
     nonisolated func getKnownCorrespondentsOnly() -> Bool {
-        Self.defaults?.object(forKey: "knownCorrespondentsOnly") as? Bool ?? true
+        Self.defaults?.object(forKey: "knownCorrespondentsOnly") as? Bool ?? false
     }
 
     nonisolated func setKnownCorrespondentsOnly(_ enabled: Bool) {
