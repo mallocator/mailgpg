@@ -285,10 +285,14 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
     }
 
     func encrypt(data: Data, recipientFingerprints: [String],
+                 hiddenRecipientFingerprints: [String],
                  reply: @escaping (Data?, Error?) -> Void) {
         do {
             let recipientFingerprints = try recipientFingerprints.map {
                 try validatedKeyIdentifier($0, fieldName: "recipient fingerprint", allowShort: false)
+            }
+            let hiddenRecipientFingerprints = try hiddenRecipientFingerprints.map {
+                try validatedKeyIdentifier($0, fieldName: "hidden recipient fingerprint", allowShort: false)
             }
             if gnupgHome == nil { try GPGAgent.ensureRunning() }
             let (rawHeaders, body) = splitMessage(data)
@@ -298,6 +302,7 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
             var args = ["--encrypt", "--armor", "--batch", "--yes",
                         "--trust-model", "always"]
             for fp in recipientFingerprints { args += ["--recipient", fp] }
+            for fp in hiddenRecipientFingerprints { args += ["--hidden-recipient", fp] }
             let (encData, stderr, code) = try gpg(args, input: innerMIME)
             guard code == 0 else {
                 throw GPGXPCError.make(.gpgFailed,
@@ -311,11 +316,15 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
 
     func signAndEncrypt(data: Data, signerKeyID: String,
                         recipientFingerprints: [String],
+                        hiddenRecipientFingerprints: [String],
                         reply: @escaping (Data?, Error?) -> Void) {
         do {
             let signerKeyID = try validatedKeyIdentifier(signerKeyID, fieldName: "signer key ID")
             let recipientFingerprints = try recipientFingerprints.map {
                 try validatedKeyIdentifier($0, fieldName: "recipient fingerprint", allowShort: false)
+            }
+            let hiddenRecipientFingerprints = try hiddenRecipientFingerprints.map {
+                try validatedKeyIdentifier($0, fieldName: "hidden recipient fingerprint", allowShort: false)
             }
             if gnupgHome == nil { try GPGAgent.ensureRunning() }
             log.info("signAndEncrypt: polling card-status…")
@@ -328,7 +337,8 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
             var args = ["--sign", "--encrypt", "--armor", "--batch", "--yes",
                         "--trust-model", "always", "--local-user", signerKeyID]
             for fp in recipientFingerprints { args += ["--recipient", fp] }
-            log.info("signAndEncrypt: invoking gpg for \(recipientFingerprints.count) recipient(s)")
+            for fp in hiddenRecipientFingerprints { args += ["--hidden-recipient", fp] }
+            log.info("signAndEncrypt: invoking gpg for \(recipientFingerprints.count) recipient(s), \(hiddenRecipientFingerprints.count) hidden")
             let (encData, stderr, code) = try gpg(args, input: innerMIME)
             guard code == 0 else {
                 throw GPGXPCError.make(.gpgFailed, message: signError(code: code, stderr: stderr))

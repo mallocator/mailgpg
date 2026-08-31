@@ -134,21 +134,26 @@ actor GPGService {
         }
     }
 
-    func encrypt(data: Data, recipientFingerprints: [String]) async throws -> Data {
+    func encrypt(data: Data, recipientFingerprints: [String],
+                 hiddenRecipientFingerprints: [String] = []) async throws -> Data {
         let proxy = try connection.proxy()
         return try await withCheckedThrowingContinuation { continuation in
-            proxy.encrypt(data: data, recipientFingerprints: recipientFingerprints) { result, error in
+            proxy.encrypt(data: data,
+                          recipientFingerprints: recipientFingerprints,
+                          hiddenRecipientFingerprints: hiddenRecipientFingerprints) { result, error in
                 continuation.resume(with: result, error: error)
             }
         }
     }
 
     func signAndEncrypt(data: Data, signerKeyID: String,
-                        recipientFingerprints: [String]) async throws -> Data {
+                        recipientFingerprints: [String],
+                        hiddenRecipientFingerprints: [String] = []) async throws -> Data {
         let proxy = try connection.proxy()
         return try await withCheckedThrowingContinuation { continuation in
             proxy.signAndEncrypt(data: data, signerKeyID: signerKeyID,
-                                 recipientFingerprints: recipientFingerprints) { result, error in
+                                 recipientFingerprints: recipientFingerprints,
+                                 hiddenRecipientFingerprints: hiddenRecipientFingerprints) { result, error in
                 continuation.resume(with: result, error: error)
             }
         }

@@ -37,7 +37,9 @@ final class GPGCryptoTests: XCTestCase {
         // Encrypt
         var encrypted: Data?
         let encSem = DispatchSemaphore(value: 0)
-        svc.encrypt(data: Self.testMessage, recipientFingerprints: [fp]) { data, error in
+        svc.encrypt(data: Self.testMessage,
+                    recipientFingerprints: [fp],
+                    hiddenRecipientFingerprints: []) { data, error in
             XCTAssertNil(error, "Encrypt error: \(String(describing: error))")
             encrypted = data
             encSem.signal()
@@ -285,7 +287,8 @@ final class GPGCryptoTests: XCTestCase {
         svc.signAndEncrypt(
             data: Self.testMessage,
             signerKeyID: fp,
-            recipientFingerprints: [fp]) { data, error in
+            recipientFingerprints: [fp],
+            hiddenRecipientFingerprints: []) { data, error in
                 XCTAssertNil(error, "SignAndEncrypt error: \(String(describing: error))")
                 encrypted = data
                 encSem.signal()

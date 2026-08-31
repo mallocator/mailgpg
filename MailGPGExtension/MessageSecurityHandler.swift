@@ -196,7 +196,26 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         // same normalisation the recipient lookup uses.
         let senderEmail  = message.fromAddress.bareAddress
         let state = sessionState(for: message)
-        let fingerprints = state?.recipientKeys.values.map(\.fingerprint) ?? []
+        let keysByEmail = state?.recipientKeys ?? [:]
+
+        // Split visible from blind recipients. OpenPGP stamps a key ID into the
+        // packet for every recipient, and every recipient can read that list —
+        // so encrypting to a BCC address the ordinary way tells the whole To
+        // line who else received it. Those go in as hidden recipients instead.
+        let visibleEmails = Set((message.toAddresses + message.ccAddresses).map(\.bareAddress))
+        let bccEmails = Set(message.bccAddresses.map(\.bareAddress)).subtracting(visibleEmails)
+        let matchedVisible = visibleEmails.compactMap { keysByEmail[$0]?.fingerprint }
+        // A key carrying several UIDs can serve both a visible and a blind
+        // address; keeping it visible is correct, so drop the duplicate.
+        let hiddenFingerprints = bccEmails
+            .compactMap { keysByEmail[$0]?.fingerprint }
+            .filter { !matchedVisible.contains($0) }
+        // Defensive: if address matching found nothing but we do hold keys,
+        // fall back to the old behaviour rather than silently encrypting to
+        // no one. Losing BCC privacy beats failing to send.
+        let visibleFingerprints = (matchedVisible.isEmpty && hiddenFingerprints.isEmpty)
+            ? keysByEmail.values.map(\.fingerprint)
+            : matchedVisible
 
         // Check if encryption is requested but some recipients are missing keys.
         if shouldEncrypt {
@@ -262,7 +281,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 // decryptable. Without this, Mail's indexer calls decodedMessage on
                 // the sent message, decryption fails, and the error triggers a KVO
                 // re-entrancy crash in Mail.app.
-                var encryptFingerprints = fingerprints
+                var encryptFingerprints = visibleFingerprints
                 if shouldEncrypt, let sk = ownKeyForSentCopy {
                     encryptFingerprints.append(sk.fingerprint)
                     log.info("encode: added sender key to encryption recipients")
@@ -280,11 +299,12 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                     log.info("encode: signing with selected sender key")
 
                     if shouldEncrypt {
-                        log.info("encode: sign+encrypt to \(encryptFingerprints.count) recipient(s)")
+                        log.info("encode: sign+encrypt to \(encryptFingerprints.count) recipient(s), \(hiddenFingerprints.count) hidden")
                         encodedData = MEEncodedOutgoingMessage(
                             rawData: try await GPGService.shared.signAndEncrypt(
                                 data: body, signerKeyID: signerKey.keyID,
-                                recipientFingerprints: encryptFingerprints),
+                                recipientFingerprints: encryptFingerprints,
+                                hiddenRecipientFingerprints: hiddenFingerprints),
                             isSigned: true, isEncrypted: true)
                         log.info("encode: sign+encrypt succeeded")
                     } else {
@@ -295,10 +315,11 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                         log.info("encode: sign succeeded")
                     }
                 } else {
-                    log.info("encode: encrypt-only to \(encryptFingerprints.count) recipient(s)")
+                    log.info("encode: encrypt-only to \(encryptFingerprints.count) recipient(s), \(hiddenFingerprints.count) hidden")
                     encodedData = MEEncodedOutgoingMessage(
                         rawData: try await GPGService.shared.encrypt(
-                            data: body, recipientFingerprints: encryptFingerprints),
+                            data: body, recipientFingerprints: encryptFingerprints,
+                            hiddenRecipientFingerprints: hiddenFingerprints),
                         isSigned: false, isEncrypted: true)
                     log.info("encode: encrypt succeeded")
                 }

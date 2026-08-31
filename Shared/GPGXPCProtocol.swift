@@ -50,18 +50,25 @@ import Foundation
     )
 
     /// Encrypt `data` for the given recipient fingerprints.
+    ///
+    /// `hiddenRecipientFingerprints` are encrypted to with `--hidden-recipient`,
+    /// which writes an all-zero key ID into the packet instead of the real one.
+    /// BCC recipients belong here: OpenPGP otherwise stamps a key ID per
+    /// recipient into the message, and every recipient can read that list.
     /// The reply is the PGP-encrypted payload.
     func encrypt(
         data: Data,
         recipientFingerprints: [String],
+        hiddenRecipientFingerprints: [String],
         reply: @escaping (Data?, Error?) -> Void
     )
 
-    /// Sign and encrypt in one step.
+    /// Sign and encrypt in one step. See `encrypt` on hidden recipients.
     func signAndEncrypt(
         data: Data,
         signerKeyID: String,
         recipientFingerprints: [String],
+        hiddenRecipientFingerprints: [String],
         reply: @escaping (Data?, Error?) -> Void
     )
 
