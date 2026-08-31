@@ -192,7 +192,7 @@ final class ParsingTests: XCTestCase {
             [GNUPG:] ENC_TO AABBCCDD11223344 1 0
             [GNUPG:] DECRYPTION_OKAY
             """
-        let status = svc.parseDecryptStatus(stderr: stderr)
+        let status = svc.parseDecryptStatus(status: stderr)
         if case .encrypted(let signers) = status {
             XCTAssertTrue(signers.isEmpty)
         } else {
@@ -208,7 +208,7 @@ final class ParsingTests: XCTestCase {
             [GNUPG:] GOODSIG AABBCCDD11223344 Alice Wonderland <alice@example.com>
             [GNUPG:] VALIDSIG AABBCCDD112233441122334411223344AABBCCDD 2021-01-01 1609459200 0 4 0 1 8 00 AABBCCDD112233441122334411223344AABBCCDD
             """
-        let status = svc.parseDecryptStatus(stderr: stderr)
+        let status = svc.parseDecryptStatus(status: stderr)
         if case .encrypted(let signers) = status {
             XCTAssertEqual(signers.count, 1)
             XCTAssertEqual(signers[0].email,       "alice@example.com")
@@ -225,7 +225,7 @@ final class ParsingTests: XCTestCase {
             [GNUPG:] GOODSIG AABBCCDD11223344 Bob <bob@example.com>
             [GNUPG:] VALIDSIG AABBCCDD112233441122334411223344AABBCCDD 2021-01-01 1609459200
             """
-        let status = svc.parseDecryptStatus(stderr: stderr)
+        let status = svc.parseDecryptStatus(status: stderr)
         if case .signed(let signers) = status {
             XCTAssertEqual(signers.count, 1)
             XCTAssertEqual(signers[0].email, "bob@example.com")
@@ -239,7 +239,7 @@ final class ParsingTests: XCTestCase {
             [GNUPG:] DECRYPTION_OKAY
             [GNUPG:] BADSIG AABBCCDD11223344 Eve Attacker
             """
-        let status = svc.parseDecryptStatus(stderr: stderr)
+        let status = svc.parseDecryptStatus(status: stderr)
         if case .signatureInvalid(let reason) = status {
             XCTAssert(reason.contains("AABBCCDD11223344"), "reason=\(reason)")
         } else {
@@ -249,7 +249,7 @@ final class ParsingTests: XCTestCase {
 
     func testParseDecryptStatus_noPubKey() {
         let stderr = "[GNUPG:] NO_PUBKEY DEADBEEFDEADBEEF"
-        let status = svc.parseDecryptStatus(stderr: stderr)
+        let status = svc.parseDecryptStatus(status: stderr)
         if case .keyNotFound(let keyID) = status {
             XCTAssertEqual(keyID, "DEADBEEFDEADBEEF")
         } else {
@@ -258,7 +258,7 @@ final class ParsingTests: XCTestCase {
     }
 
     func testParseDecryptStatus_plain() {
-        let status = svc.parseDecryptStatus(stderr: "gpg: no encrypted data found")
+        let status = svc.parseDecryptStatus(status: "gpg: no encrypted data found")
         XCTAssertEqual(status, .plain)
     }
 
@@ -269,7 +269,7 @@ final class ParsingTests: XCTestCase {
             [GNUPG:] GOODSIG AABBCCDD11223344 Alice Wonderland <alice@example.com>
             [GNUPG:] VALIDSIG AABBCCDD112233441122334411223344AABBCCDD 2021-01-01 1609459200
             """
-        let status = svc.parseVerifyStatus(stdout: stdout, stderr: "")
+        let status = svc.parseVerifyStatus(status: stdout)
         if case .signed(let signers) = status {
             XCTAssertEqual(signers.count, 1)
             XCTAssertEqual(signers[0].email,       "alice@example.com")
@@ -283,7 +283,7 @@ final class ParsingTests: XCTestCase {
     func testParseVerifyStatus_goodSig_noEmail_fallsBackToName() {
         // GOODSIG with a plain name (no <email>) → name is used as email field
         let stdout = "[GNUPG:] GOODSIG AABBCCDD11223344 Just A Name"
-        let status = svc.parseVerifyStatus(stdout: stdout, stderr: "")
+        let status = svc.parseVerifyStatus(status: stdout)
         if case .signed(let signers) = status {
             XCTAssertFalse(signers[0].email.isEmpty)
         } else {
@@ -293,14 +293,14 @@ final class ParsingTests: XCTestCase {
 
     func testParseVerifyStatus_badSig() {
         let stdout = "[GNUPG:] BADSIG AABBCCDD11223344 Eve Attacker"
-        let status = svc.parseVerifyStatus(stdout: stdout, stderr: "")
+        let status = svc.parseVerifyStatus(status: stdout)
         if case .signatureInvalid(_) = status { /* pass */ }
         else { XCTFail("Expected .signatureInvalid, got \(status)") }
     }
 
     func testParseVerifyStatus_noPubKey() {
         let stdout = "[GNUPG:] NO_PUBKEY DEADBEEFDEADBEEF"
-        let status = svc.parseVerifyStatus(stdout: stdout, stderr: "")
+        let status = svc.parseVerifyStatus(status: stdout)
         if case .keyNotFound(let keyID) = status {
             XCTAssertEqual(keyID, "DEADBEEFDEADBEEF")
         } else {
@@ -308,17 +308,20 @@ final class ParsingTests: XCTestCase {
         }
     }
 
-    func testParseVerifyStatus_humanReadableFallback() {
-        // No [GNUPG:] status lines → falls back to checking human-readable stderr
-        let status = svc.parseVerifyStatus(stdout: "", stderr: "gpg: Good signature from \"Alice\"")
-        if case .signed(_) = status { /* pass */ }
-        else { XCTFail("Expected .signed from stderr fallback, got \(status)") }
+    func testParseVerifyStatus_humanReadableTextIsNotTrusted() {
+        // Text that looks like a successful verification but carries no
+        // [GNUPG:] status line must NOT produce .signed. GPG echoes
+        // attacker-chosen user IDs in its human-readable output, so the old
+        // fallback was forgeable by anyone who could get a key imported.
+        let status = svc.parseVerifyStatus(status: "gpg: Good signature from \"Alice\"")
+        if case .signatureInvalid(_) = status { /* pass */ }
+        else { XCTFail("Expected .signatureInvalid for non-status text, got \(status)") }
     }
 
     func testParseVerifyStatus_unknownFailure() {
-        let status = svc.parseVerifyStatus(stdout: "", stderr: "gpg: something went wrong")
+        let status = svc.parseVerifyStatus(status: "gpg: something went wrong")
         if case .signatureInvalid(_) = status { /* pass */ }
-        else { XCTFail("Expected .signatureInvalid for unrecognised stderr, got \(status)") }
+        else { XCTFail("Expected .signatureInvalid for unrecognised output, got \(status)") }
     }
 
     // MARK: - extractFromEmail

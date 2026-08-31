@@ -99,7 +99,7 @@ extension GPGServiceImpl {
 
     // MARK: - GPG status parsers
 
-    /// Parse the `[GNUPG:]` status lines that GPG writes when `--status-fd 2`
+    /// Parse the `[GNUPG:]` status lines GPG writes to its status file
     /// is used during decryption. Returns a `SecurityStatus` describing what happened.
     ///
     /// Key status tokens:
@@ -107,13 +107,13 @@ extension GPGServiceImpl {
     ///   GOODSIG <keyID> <name>    — a valid signature was found
     ///   BADSIG  <keyID> <name>    — signature present but invalid (tampered?)
     ///   NO_PUBKEY <keyID>         — can't verify: public key not in keychain
-    func parseDecryptStatus(stderr: String) -> SecurityStatus {
+    func parseDecryptStatus(status: String) -> SecurityStatus {
         var pending: [(email: String, keyID: String)] = []
         var fingerprintByKeyID: [String: String] = [:]  // keyID → full fingerprint from VALIDSIG
         var lastKeyID: String? = nil
         var isEncrypted = false
 
-        for line in stderr.components(separatedBy: "\n") {
+        for line in status.components(separatedBy: "\n") {
             if line.contains("[GNUPG:] DECRYPTION_OKAY") {
                 isEncrypted = true
             } else if line.contains("[GNUPG:] GOODSIG") {
@@ -150,9 +150,9 @@ extension GPGServiceImpl {
         return .plain
     }
 
-    /// Parse status lines from `gpg --verify --status-fd 1`.
-    func parseVerifyStatus(stdout: String, stderr: String) -> SecurityStatus {
-        let combined = stdout + "\n" + stderr
+    /// Parse status lines from `gpg --verify`, read from the status file.
+    func parseVerifyStatus(status: String) -> SecurityStatus {
+        let combined = status
         var keyID: String? = nil
         var name: String? = nil
         var fingerprint: String? = nil
@@ -184,9 +184,10 @@ extension GPGServiceImpl {
             let fp = fingerprint ?? keyID
             return .signed(signers: [Signer(email: name, keyID: keyID, fingerprint: fp, trustLevel: .unknown)])
         }
-        // Fallback: check human-readable stderr
-        if stderr.lowercased().contains("good signature") { return .signed(signers: []) }
-        return .signatureInvalid(reason: stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+        // No GOODSIG in the status output means the signature did not verify.
+        // There is deliberately no fallback to scraping human-readable output —
+        // that text carries attacker-chosen user IDs.
+        return .signatureInvalid(reason: "No valid signature found")
     }
 
     /// Look up each signer's trust level in the local keyring and return an

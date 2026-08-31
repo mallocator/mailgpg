@@ -203,15 +203,13 @@ extension GPGServiceImpl {
             reply(nil, GPGXPCError.make(.encodingFailed)); return
         }
         do {
-            // --status-fd 1: IMPORT_OK lines go to stdout so we can parse the fingerprint.
-            let (statusOut, stderr, code) = try gpg(
-                ["--import", "--batch", "--yes", "--status-fd", "1"],
+            let (_, stderr, statusText, code) = try gpgWithStatus(
+                ["--import", "--batch", "--yes"],
                 input: keyData)
             guard code == 0 else {
                 throw GPGXPCError.make(.gpgFailed, message: "gpg import failed: \(stderr)")
             }
-            let statusStr = String(data: statusOut, encoding: .utf8) ?? ""
-            guard let fingerprint = parseImportedFingerprint(from: statusStr) else {
+            guard let fingerprint = parseImportedFingerprint(from: statusText) else {
                 throw GPGXPCError.make(.encodingFailed,
                     message: "Could not determine imported key fingerprint")
             }

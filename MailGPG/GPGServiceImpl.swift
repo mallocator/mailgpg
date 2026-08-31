@@ -54,8 +54,8 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
     /// Why separate stdout and stderr?
     /// - stdout carries the actual output (plaintext, signature, key listings).
     /// - stderr carries human-readable progress and error messages from GPG.
-    /// - When we pass `--status-fd 2`, GPG also writes machine-readable
-    ///   `[GNUPG:]` status lines to stderr, which we parse for signer info.
+    /// Machine-readable `[GNUPG:]` status lines are NOT read from either
+    /// stream — see `gpgWithStatus` for why, and use that when you need them.
     func gpg(_ args: [String], input: Data? = nil) throws -> (stdout: Data, stderr: String, exitCode: Int32) {
         let path = try GPGLocator.locate()
         let process = Process()
@@ -116,6 +116,34 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
         group.wait()
         process.waitUntilExit()
         return (stdout, String(data: errData, encoding: .utf8) ?? "", process.terminationStatus)
+    }
+
+    /// Runs GPG with `[GNUPG:]` status lines written to a private file rather
+    /// than mixed into stdout or stderr.
+    ///
+    /// This matters for correctness, not tidiness. GPG's human-readable output
+    /// echoes user ID strings, and user IDs are chosen by whoever created the
+    /// key. Scanning stderr for `[GNUPG:] GOODSIG` therefore reads a channel an
+    /// attacker can write to: a UID crafted to contain a newline and a forged
+    /// status line would be indistinguishable from the real thing. The status
+    /// file carries only what GPG itself wrote.
+    func gpgWithStatus(_ args: [String], input: Data? = nil)
+        throws -> (stdout: Data, stderr: String, status: String, exitCode: Int32) {
+
+        let statusURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mailgpg-status-\(UUID().uuidString)")
+        guard FileManager.default.createFile(
+            atPath: statusURL.path,
+            contents: nil,
+            attributes: [.posixPermissions: 0o600]
+        ) else {
+            throw GPGXPCError.make(.gpgFailed, message: "Could not create temporary status file")
+        }
+        defer { try? FileManager.default.removeItem(at: statusURL) }
+
+        let result = try gpg(["--status-file", statusURL.path] + args, input: input)
+        let status = (try? String(contentsOf: statusURL, encoding: .utf8)) ?? ""
+        return (result.stdout, result.stderr, status, result.exitCode)
     }
 
     // MARK: - RFC 2822 / MIME helpers — see GPGServiceImpl+MIME.swift
@@ -318,22 +346,20 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
         do {
             if gnupgHome == nil { try GPGAgent.ensureRunning() }
             let payload = extractPGPPayload(from: data)
-            // --status-fd 2: write [GNUPG:] machine-readable lines to stderr
-            // so we can parse signer info without polluting stdout (plaintext).
-            let (plaintext, stderr, code) = try gpg(
-                ["--decrypt", "--batch", "--yes", "--status-fd", "2"],
+            let (plaintext, stderr, statusText, code) = try gpgWithStatus(
+                ["--decrypt", "--batch", "--yes"],
                 input: payload)
             // GPG exits non-zero (2) when the embedded signature can't be
             // verified (e.g. sender's public key not in keychain), even though
             // decryption itself succeeded. Treat DECRYPTION_OKAY as the
             // authoritative success indicator and only hard-fail if we got
             // neither that status nor a zero exit.
-            let decryptionOkay = stderr.contains("[GNUPG:] DECRYPTION_OKAY")
+            let decryptionOkay = statusText.contains("[GNUPG:] DECRYPTION_OKAY")
             guard code == 0 || decryptionOkay else {
                 throw GPGXPCError.make(.gpgFailed,
                     message: "gpg decrypt failed (exit \(code)): \(stderr)")
             }
-            var status = parseDecryptStatus(stderr: stderr)
+            var status = parseDecryptStatus(status: statusText)
 
             // If the embedded signature couldn't be verified due to a missing
             // public key, try to fetch the sender's key and re-run the decrypt
@@ -344,10 +370,10 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
                 let keyFetched = (try? resolveKey(email: senderEmail, keyID: fallbackKeyID)) != nil
 
                 if keyFetched {
-                    let (_, stderr2, _) = try gpg(
-                        ["--decrypt", "--batch", "--yes", "--status-fd", "2"],
+                    let (_, _, statusText2, _) = try gpgWithStatus(
+                        ["--decrypt", "--batch", "--yes"],
                         input: payload)
-                    status = parseDecryptStatus(stderr: stderr2)
+                    status = parseDecryptStatus(status: statusText2)
                     log.info("decrypt: re-verified after key fetch")
                 }
             }
@@ -380,12 +406,10 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
                 throw GPGXPCError.make(.gpgFailed, message: "Could not create temporary signature file")
             }
 
-            // --status-fd 1: [GNUPG:] lines go to stdout so we can capture them cleanly.
-            let (stdoutData, stderr, _) = try gpg(
-                ["--verify", "--batch", "--status-fd", "1", sigURL.path, "-"],
+            let (_, _, statusText, _) = try gpgWithStatus(
+                ["--verify", "--batch", sigURL.path, "-"],
                 input: data)
-            let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-            let status = enrichWithTrust(parseVerifyStatus(stdout: stdout, stderr: stderr))
+            let status = enrichWithTrust(parseVerifyStatus(status: statusText))
             reply(try xpcEncode(status), nil)
         } catch {
             reply(nil, GPGXPCError.make(.gpgFailed, message: error.localizedDescription))
