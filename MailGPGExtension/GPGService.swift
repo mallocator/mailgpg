@@ -316,6 +316,23 @@ actor GPGService {
         "hkps://keys.mailvelope.com",
     ]
 
+    // MARK: - Pinned recipient keys (trust on first use)
+
+    private static let pinnedKeysDefault = "pinnedKeys"
+
+    /// The fingerprint last used for this address, if any.
+    nonisolated func pinnedFingerprint(for email: String) -> String? {
+        let map = Self.defaults?.dictionary(forKey: Self.pinnedKeysDefault) as? [String: String]
+        return map?[email.lowercased()]
+    }
+
+    /// Record the fingerprint now in use for this address.
+    nonisolated func pin(fingerprint: String, for email: String) {
+        var map = (Self.defaults?.dictionary(forKey: Self.pinnedKeysDefault) as? [String: String]) ?? [:]
+        map[email.lowercased()] = fingerprint
+        Self.defaults?.set(map, forKey: Self.pinnedKeysDefault)
+    }
+
     /// Whether outgoing encrypted mail hides its Subject line. Off by default.
     nonisolated func getProtectSubject() -> Bool {
         Self.defaults?.bool(forKey: "protectSubject") ?? false

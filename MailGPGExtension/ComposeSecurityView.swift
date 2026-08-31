@@ -56,6 +56,8 @@ final class ComposeSessionState: ObservableObject {
 enum RecipientKeyStatus: Equatable {
     case found
     case notFound
+    /// A key exists, but it is not the one last used for this address.
+    case keyChanged
     case loading
 }
 
@@ -231,6 +233,10 @@ private struct RecipientRow: View {
             Image(systemName: verified ? "key.fill" : "key")
                 .font(.caption)
                 .foregroundStyle(verified ? Color.green : Color.orange)
+        case .keyChanged:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(Color.red)
         case .notFound:
             Image(systemName: "key.slash")
                 .font(.caption)
@@ -254,6 +260,17 @@ private struct RecipientRow: View {
                 Text(verified ? "verified" : "unverified")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+            }
+        case .keyChanged:
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(key?.keyID ?? "changed")
+                    .font(.caption2)
+                    .monospaced()
+                    .textSelection(.enabled)
+                    .foregroundStyle(Color.red)
+                Text("key changed")
+                    .font(.caption2)
+                    .foregroundStyle(Color.red)
             }
         case .notFound:
             Text("No key")

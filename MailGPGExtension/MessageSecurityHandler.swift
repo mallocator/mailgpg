@@ -225,6 +225,26 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 .map { $0.bareAddress }
                 .filter { state?.recipientKeyStatus[$0] == .loading }
 
+            let changedEmails = allRecipients
+                .map { $0.bareAddress }
+                .filter { state?.recipientKeyStatus[$0] == .keyChanged }
+
+            if !changedEmails.isEmpty {
+                let list = changedEmails.joined(separator: ", ")
+                log.error("encode: refusing to encrypt — \(changedEmails.count) recipient key(s) changed")
+                completionHandler(MEMessageEncodingResult(
+                    encodedMessage: nil,
+                    signingError: nil,
+                    encryptionError: NSError(
+                        domain: "net.pyxzl.mailgpg", code: 5,
+                        userInfo: [NSLocalizedDescriptionKey:
+                            "The public key for these recipients is not the one used before:\n\(list)\n\n"
+                          + "This is what key substitution looks like. Confirm the new key's "
+                          + "fingerprint with the recipient through another channel, then mark it "
+                          + "verified in Manage Keys to accept it."])))
+                return
+            }
+
             if !missingEmails.isEmpty {
                 let list = missingEmails.joined(separator: ", ")
                 log.error("encode: encryption requested but \(missingEmails.count) recipient key(s) are missing")

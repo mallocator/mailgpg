@@ -87,9 +87,26 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
                     : localKeysByEmail[email]
 
                 if let key {
-                    keyStatus[email] = .found
-                    recipientKeys[email] = key
-                    annotations[address] = .success(withLocalizedDescription: "Key: \(key.keyID)")
+                    // Trust on first use. Encryption runs with --trust-model
+                    // always, so GPG will happily encrypt to whatever key turns
+                    // up for an address — including one that replaced the key
+                    // you used last week. Remember the fingerprint per address
+                    // and refuse silently swapping it.
+                    let pinned = GPGService.shared.pinnedFingerprint(for: email)
+                    if let pinned, pinned != key.fingerprint, !key.trusted {
+                        keyStatus[email] = .keyChanged
+                        recipientKeys[email] = key
+                        annotations[address] = .error(withLocalizedDescription:
+                            "Key changed (was \(String(pinned.suffix(8))), now \(key.keyID))")
+                    } else {
+                        // Either first contact, the same key as last time, or a
+                        // key the user has verified locally — verifying is the
+                        // deliberate act that accepts a replacement.
+                        GPGService.shared.pin(fingerprint: key.fingerprint, for: email)
+                        keyStatus[email] = .found
+                        recipientKeys[email] = key
+                        annotations[address] = .success(withLocalizedDescription: "Key: \(key.keyID)")
+                    }
                 } else {
                     keyStatus[email] = .notFound
                     let message = shouldEncrypt ? "No public key" : "No local public key"
