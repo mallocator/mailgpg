@@ -6,11 +6,11 @@ Configure these at: https://github.com/mahaupt/mailgpg/settings/secrets/actions
 |--------|-------------|---------------|
 | `DEVELOPER_ID_CERTIFICATE_BASE64` | Developer ID Application certificate + private key as base64-encoded .p12 | Keychain Access → export cert as .p12, then `base64 -i cert.p12 \| pbcopy` |
 | `DEVELOPER_ID_CERTIFICATE_PASSWORD` | Password set when exporting the .p12 | Set when exporting from Keychain Access |
-| `DEVELOPMENT_TEAM` | Your 10-character Apple Team ID | `ZM4SAL8656` (from Xcode project settings) |
+| `DEVELOPMENT_TEAM` | Your 10-character Apple Team ID | `3HKD37M482` (from Xcode project settings) |
 | `APPLE_ID` | Your Apple ID email used for notarization | e.g. `you@example.com` |
 | `NOTARIZATION_PASSWORD` | App-specific password for notarytool | https://appleid.apple.com → Sign-In and Security → App-Specific Passwords |
-| `PROVISIONING_PROFILE_HOST_BASE64` | Developer ID provisioning profile for `com.mahaupt.MailGPG` | developer.apple.com → Profiles → + → macOS Developer ID, then `base64 -i file.provisionprofile \| pbcopy` |
-| `PROVISIONING_PROFILE_EXTENSION_BASE64` | Developer ID provisioning profile for `com.mahaupt.MailGPG.MailGPGExtension` | Same as above for the extension bundle ID |
+| `PROVISIONING_PROFILE_HOST_BASE64` | Developer ID provisioning profile for `net.pyxzl.MailGPG` | developer.apple.com → Profiles → + → macOS Developer ID, then `base64 -i file.provisionprofile \| pbcopy` |
+| `PROVISIONING_PROFILE_EXTENSION_BASE64` | Developer ID provisioning profile for `net.pyxzl.MailGPG.MailGPGExtension` | Same as above for the extension bundle ID |
 | `TAP_TOKEN` | GitHub Personal Access Token with repo write access to mahaupt/homebrew-mailgpg | GitHub → Settings → Developer Settings → Personal Access Tokens (classic), scopes: `repo` |
 
 ## Triggering a release

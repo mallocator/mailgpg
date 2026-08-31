@@ -4,7 +4,7 @@
 import Foundation
 import os
 
-let log = Logger(subsystem: "com.mahaupt.mailgpg", category: "gpg")
+let log = Logger(subsystem: "net.pyxzl.mailgpg", category: "gpg")
 
 /// Implements `GPGXPCProtocol` — the actual GPG operations run here in the
 /// unsandboxed host app, which is allowed to spawn subprocesses.
@@ -21,7 +21,7 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
         super.init()
     }
 
-    private static let defaults = UserDefaults(suiteName: "group.com.mahaupt.mailgpg")
+    private static let defaults = UserDefaults(suiteName: "group.net.pyxzl.mailgpg")
 
     static func logNSError(_ error: NSError, prefix: StaticString) {
         log.error("\(prefix, privacy: .public) domain=\(error.domain, privacy: .public) code=\(error.code)")

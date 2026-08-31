@@ -4,7 +4,7 @@
 import MailKit
 import os
 
-private let log = Logger(subsystem: "com.mahaupt.mailgpg", category: "compose")
+private let log = Logger(subsystem: "net.pyxzl.mailgpg", category: "compose")
 
 extension MEEmailAddress {
     /// Bare email address, stripped of any RFC 2822 display name and angle brackets.

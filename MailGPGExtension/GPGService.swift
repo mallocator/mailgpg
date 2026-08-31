@@ -288,7 +288,7 @@ actor GPGService {
 
     // MARK: - Default signing key (UserDefaults, no XPC needed)
 
-    private static let defaults = UserDefaults(suiteName: "group.com.mahaupt.mailgpg")
+    private static let defaults = UserDefaults(suiteName: "group.net.pyxzl.mailgpg")
 
     func getDefaultSigningKey() -> String? {
         Self.defaults?.string(forKey: "defaultSigningKeyFingerprint")

@@ -4,7 +4,7 @@
 import Foundation
 
 /// The error domain used for all XPC bridge errors.
-let GPGXPCErrorDomain = "com.mahaupt.mailgpg.xpc"
+let GPGXPCErrorDomain = "net.pyxzl.mailgpg.xpc"
 
 /// Typed error codes that cross the XPC boundary.
 ///

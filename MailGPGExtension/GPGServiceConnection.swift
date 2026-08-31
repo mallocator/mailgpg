@@ -27,7 +27,7 @@ final class GPGServiceConnection {
 
     // MARK: - Configuration
 
-    private let serviceName = "com.mahaupt.mailgpg.gpgservice"
+    private let serviceName = "net.pyxzl.mailgpg.gpgservice"
     private let maxRetries  = 3
     private let retryDelay  = Duration.seconds(2)
 

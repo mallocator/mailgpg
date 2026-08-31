@@ -24,7 +24,7 @@ renewing everything when that happens.
 ## 2. Export the certificate as .p12
 
 1. Open **Keychain Access** → **My Certificates**
-2. Find **Developer ID Application: Marcel Haupt (ZM4SAL8656)**
+2. Find **Developer ID Application: Marcel Haupt (3HKD37M482)**
 3. Right-click → **Export** → format: **Personal Information Exchange (.p12)**
 4. Set a strong password
 5. Base64-encode and copy to clipboard:

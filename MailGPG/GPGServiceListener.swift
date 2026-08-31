@@ -6,7 +6,7 @@ import Foundation
 /// The Mach service name both sides must agree on.
 /// Think of it like a port number — the extension dials this name,
 /// the host app listens on it.
-let GPGServiceName = "com.mahaupt.mailgpg.gpgservice"
+let GPGServiceName = "net.pyxzl.mailgpg.gpgservice"
 
 /// Sets up and runs the XPC listener on the host-app side.
 ///
@@ -68,7 +68,7 @@ final class GPGServiceListener: NSObject, NSXPCListenerDelegate {
         // Note: PID-based lookup has a theoretical TOCTOU race (the process
         // could be replaced between connection and validation), but this is
         // acceptable for validating our own extension on the same machine.
-        let requirement = "identifier \"com.mahaupt.MailGPG.MailGPGExtension\""
+        let requirement = "identifier \"net.pyxzl.MailGPG.MailGPGExtension\""
         let pid = connection.processIdentifier
 
         var secCode: SecCode?

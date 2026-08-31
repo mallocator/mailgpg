@@ -4,7 +4,7 @@
 import MailKit
 import os
 
-private let log = Logger(subsystem: "com.mahaupt.mailgpg", category: "encode")
+private let log = Logger(subsystem: "net.pyxzl.mailgpg", category: "encode")
 
 class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
@@ -209,7 +209,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                     encodedMessage: nil,
                     signingError: nil,
                     encryptionError: NSError(
-                        domain: "com.mahaupt.mailgpg", code: 3,
+                        domain: "net.pyxzl.mailgpg", code: 3,
                         userInfo: [NSLocalizedDescriptionKey:
                             "The following recipients don't have a public key:\n\(list)\n\n" +
                             "Turn off encryption to send without it, or add the missing keys."])))
@@ -223,7 +223,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                     encodedMessage: nil,
                     signingError: nil,
                     encryptionError: NSError(
-                        domain: "com.mahaupt.mailgpg", code: 4,
+                        domain: "net.pyxzl.mailgpg", code: 4,
                         userInfo: [NSLocalizedDescriptionKey:
                             "Still looking up keys for:\n\(list)\n\nPlease try again in a moment."])))
                 return

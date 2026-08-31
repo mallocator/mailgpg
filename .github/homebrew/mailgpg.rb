@@ -22,7 +22,7 @@ cask "mailgpg" do
 
   postflight do
     plist_dir = "#{Dir.home}/Library/LaunchAgents"
-    plist_path = "#{plist_dir}/com.mahaupt.mailgpg.plist"
+    plist_path = "#{plist_dir}/net.pyxzl.mailgpg.plist"
     
     FileUtils.mkdir_p(plist_dir)
 
@@ -33,9 +33,9 @@ cask "mailgpg" do
       <plist version="1.0">
       <dict>
         <key>Label</key>
-        <string>com.mahaupt.mailgpg</string>
+        <string>net.pyxzl.mailgpg</string>
         <key>AssociatedBundleIdentifiers</key>
-        <string>com.mahaupt.MailGPG</string>
+        <string>net.pyxzl.MailGPG</string>
         <key>ProgramArguments</key>
         <array>
           <string>#{executable}</string>
@@ -44,7 +44,7 @@ cask "mailgpg" do
         <true/>
         <key>MachServices</key>
         <dict>
-          <key>com.mahaupt.mailgpg.gpgservice</key>
+          <key>net.pyxzl.mailgpg.gpgservice</key>
           <true/>
         </dict>
       </dict>
@@ -58,7 +58,7 @@ cask "mailgpg" do
   end
 
   uninstall_postflight do
-    plist_path = "#{Dir.home}/Library/LaunchAgents/com.mahaupt.mailgpg.plist"
+    plist_path = "#{Dir.home}/Library/LaunchAgents/net.pyxzl.mailgpg.plist"
 
     if File.exist?(plist_path)
       system_command "/bin/launchctl",
