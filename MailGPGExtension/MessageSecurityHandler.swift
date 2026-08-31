@@ -1,6 +1,7 @@
 // MessageSecurityHandler.swift
 // MailGPGExtension
 
+import CryptoKit
 import MailKit
 import os
 
@@ -10,22 +11,37 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
     static let shared = MessageSecurityHandler()
 
-    /// Unified cache keyed by message UUID (`X-Universally-Unique-Identifier`).
-    /// Mail calls encode() up to 3 times for the same logical message (send,
-    /// auto-save, Sent copy) with slightly different rawData each time. It also
-    /// calls decodedMessage() on the encrypted output for indexing. Both paths
-    /// share this UUID-based cache so only the FIRST encode hits GPG — all
-    /// subsequent encode and decode calls return instantly.
-    var uuidCache: [String: UUIDCacheEntry] = [:]
-    /// Serializes access to uuidCache. Mail calls decodedMessage() from multiple
+    /// Two caches, deliberately keyed differently — they answer different questions.
+    ///
+    /// `encodeCache` is keyed by message UUID because Mail calls encode() up to
+    /// three times for the same logical message (send, auto-save, Sent copy)
+    /// with slightly different rawData each time; the UUID is what makes those
+    /// calls recognisable as one message, and only the first should hit GPG.
+    ///
+    /// `decodeCache` is keyed by a hash of the message bytes. It used to share
+    /// the UUID/Message-Id key, which is wrong twice over: those headers are not
+    /// unique in practice (a reply carries the original's identifiers around),
+    /// and they are attacker-controlled. A collision made Mail render one
+    /// message's plaintext in place of another's — silently, and permanently,
+    /// because the first entry to land won. Hashing the content cannot collide
+    /// across different messages, and when the bytes differ by so much as a
+    /// header the worst case is a cache miss and a real decrypt.
+    private var encodeCache: [String: MEMessageEncodingResult] = [:]
+    private var decodeCache: [String: MEDecodedMessage] = [:]
+    /// Content hashes of messages that carry no PGP content, so plaintext mail
+    /// does not pay for a re-scan on every one of Mail's repeated calls.
+    private var notOursCache: Set<String> = []
+
+    /// Serializes access to all three. Mail calls decodedMessage() from multiple
     /// threads concurrently — without a lock they all miss the cache and start
     /// parallel GPG decrypts of the same 17 MB message.
     private let cacheLock = NSLock()
 
-    struct UUIDCacheEntry {
-        let encodeResult: MEMessageEncodingResult?
-        let decodedMessage: MEDecodedMessage?
-        let isNotMailGPGContent: Bool
+    /// Cache key for a message's content. SHA-256 over the raw bytes: hardware
+    /// accelerated, and the only identifier of a message that another message
+    /// cannot borrow.
+    private nonisolated static func contentKey(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private nonisolated static let inlinePGPMessageMarker = Data("-----BEGIN PGP MESSAGE-----".utf8)
@@ -34,59 +50,45 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     private func cachedEncodeResult(for key: String?) -> MEMessageEncodingResult? {
         guard let key else { return nil }
         cacheLock.lock()
-        let cached = uuidCache[key]?.encodeResult
-        cacheLock.unlock()
-        return cached
+        defer { cacheLock.unlock() }
+        return encodeCache[key]
     }
 
-    private func cachedDecodedMessage(for key: String?) -> MEDecodedMessage? {
-        guard let key else { return nil }
+    private func storeEncodeResult(_ result: MEMessageEncodingResult, for key: String) {
         cacheLock.lock()
-        let cached = uuidCache[key]?.decodedMessage
-        cacheLock.unlock()
-        return cached
-    }
-
-    private func isCachedNotMailGPGContent(for key: String?) -> Bool {
-        guard let key else { return false }
-        cacheLock.lock()
-        let cached = uuidCache[key]?.isNotMailGPGContent ?? false
-        cacheLock.unlock()
-        return cached
-    }
-
-    private func storeCacheEntry(_ entry: UUIDCacheEntry, for key: String) {
-        cacheLock.lock()
-        uuidCache[key] = entry
+        encodeCache[key] = result
         cacheLock.unlock()
     }
 
-    private func storeDecodedMessageIfNeeded(_ decoded: MEDecodedMessage, for key: String) {
+    private func cachedDecodedMessage(for key: String) -> MEDecodedMessage? {
         cacheLock.lock()
-        if uuidCache[key] == nil {
-            uuidCache[key] = UUIDCacheEntry(
-                encodeResult: nil,
-                decodedMessage: decoded,
-                isNotMailGPGContent: false)
-        }
+        defer { cacheLock.unlock() }
+        return decodeCache[key]
+    }
+
+    private func storeDecodedMessage(_ decoded: MEDecodedMessage, for key: String) {
+        cacheLock.lock()
+        decodeCache[key] = decoded
         cacheLock.unlock()
     }
 
-    private func storeNotMailGPGContent(for key: String?) {
-        guard let key else { return }
+    private func isCachedNotMailGPGContent(for key: String) -> Bool {
         cacheLock.lock()
-        if uuidCache[key] == nil {
-            uuidCache[key] = UUIDCacheEntry(
-                encodeResult: nil,
-                decodedMessage: nil,
-                isNotMailGPGContent: true)
-        }
+        defer { cacheLock.unlock() }
+        return notOursCache.contains(key)
+    }
+
+    private func storeNotMailGPGContent(for key: String) {
+        cacheLock.lock()
+        notOursCache.insert(key)
         cacheLock.unlock()
     }
 
     func clearUUIDCache() {
         cacheLock.lock()
-        uuidCache.removeAll()
+        encodeCache.removeAll()
+        decodeCache.removeAll()
+        notOursCache.removeAll()
         cacheLock.unlock()
     }
 
@@ -310,23 +312,23 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 // pre-built decoded message (so decodedMessage() on the encrypted
                 // output also returns instantly without a GPG decrypt).
                 if let uuid = messageUUID {
-                    let signer = signerKey.map {
-                        Signer(email: $0.email, keyID: $0.keyID,
-                               fingerprint: $0.fingerprint, trustLevel: $0.trustLevel)
-                    }
-                    let signers = signer.map { [$0] } ?? []
-                    let status: SecurityStatus = shouldEncrypt
-                        ? .encrypted(signers: signers)
-                        : .signed(signers: signers)
-                    let decoded = Self.makeDecodedMessage(data: body, status: status,
-                                                          wasEncrypted: shouldEncrypt)
-                    self.storeCacheEntry(
-                        UUIDCacheEntry(
-                            encodeResult: encodeResult,
-                            decodedMessage: decoded,
-                            isNotMailGPGContent: false),
-                        for: uuid)
-                    log.info("encode: cached under UUID")
+                    self.storeEncodeResult(encodeResult, for: uuid)
+                }
+                // Pre-build the decoded form so Mail's indexer does not decrypt
+                // the Sent copy we just produced. Keyed by the hash of the
+                // ciphertext, which is exactly the bytes Mail will hand back.
+                let signer = signerKey.map {
+                    Signer(email: $0.email, keyID: $0.keyID,
+                           fingerprint: $0.fingerprint, trustLevel: $0.trustLevel)
+                }
+                let signers = signer.map { [$0] } ?? []
+                let status: SecurityStatus = shouldEncrypt
+                    ? .encrypted(signers: signers)
+                    : .signed(signers: signers)
+                if let decoded = Self.makeDecodedMessage(data: body, status: status,
+                                                         wasEncrypted: shouldEncrypt) {
+                    self.storeDecodedMessage(decoded, for: Self.contentKey(encodedData.rawData))
+                    log.info("encode: cached decoded form under content hash")
                 }
 
                 log.info("encode: calling completionHandler with \(encodedData.rawData.count) bytes")
@@ -436,11 +438,9 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     }
 
     func decodedMessage(forMessageData data: Data) -> MEDecodedMessage? {
-        // Cache lookup: try UUID first (for messages we just encoded), then
-        // Message-Id (for incoming messages from the server).
-        let messageUUID = Self.headerValue("x-universally-unique-identifier", in: data)
-        let messageId   = Self.headerValue("message-id", in: data)
-        let cacheKey = messageUUID ?? messageId
+        // Key on the message content itself. Header-derived keys collide —
+        // see the note on decodeCache above.
+        let cacheKey = Self.contentKey(data)
 
         if let cached = cachedDecodedMessage(for: cacheKey) {
             log.debug("decodedMessage: cache hit (\(data.count) bytes)")
@@ -554,8 +554,8 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
         // Cache the decoded result so subsequent calls (Mail's indexer often
         // calls decodedMessage 10+ times for the same message) return instantly.
-        if let key = cacheKey, let decoded = result {
-            storeDecodedMessageIfNeeded(decoded, for: key)
+        if let decoded = result {
+            storeDecodedMessage(decoded, for: cacheKey)
             log.debug("decodedMessage: cached result")
         }
 
