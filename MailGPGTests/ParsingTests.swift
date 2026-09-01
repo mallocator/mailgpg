@@ -324,6 +324,52 @@ final class ParsingTests: XCTestCase {
         else { XCTFail("Expected .signatureInvalid for unrecognised output, got \(status)") }
     }
 
+    // MARK: - multiple user IDs per key
+
+    /// Real `gpg --list-keys --with-colons` output: four user IDs, one of them
+    /// revoked, one containing an escaped colon. GPG lists the most recently
+    /// added first, so "the first uid" is an arbitrary address.
+    private let multiUIDKey = """
+    pub:u:255:22:EF76E9E1C81672EB:1788167858:::u:::scaESCA:::::ed25519:::0:
+    fpr:::::::::915EB0E99DC86EE8756FC795EF76E9E1C81672EB:
+    uid:u::::1788294127::04717A2F::Old Address <old@example.com>::::::::::0:
+    uid:r::::::73B14EB7::Alice\\x3a The Boss <colon@example.com>::::::::::0:
+    uid:u::::1788167858::2BE3C731::Ravi Test <secondary@example.com>::::::::::0:
+    uid:u::::1788167858::0A45B84F::Ravi Test <primary@example.com>::::::::::0:
+    sub:u:255:18:AC58B30136D64701:1788167858::::::e:::::cv25519::
+    """
+
+    func testParseColonOutput_emitsOneKeyPerFingerprint() {
+        // Several entries sharing a fingerprint would collide as Identifiable
+        // rows in the key lists.
+        let keys = svc.parseColonOutput(multiUIDKey, wantSecretKeys: false)
+        XCTAssertEqual(keys.count, 1)
+    }
+
+    func testParseColonOutput_collectsEveryLiveAddress() {
+        guard let key = svc.parseColonOutput(multiUIDKey, wantSecretKeys: false).first else {
+            return XCTFail("Expected one key")
+        }
+        XCTAssertTrue(key.emails.contains("secondary@example.com"))
+        XCTAssertTrue(key.emails.contains("primary@example.com"))
+        XCTAssertTrue(key.emails.contains("old@example.com"))
+    }
+
+    func testParseColonOutput_excludesRevokedUserIDs() {
+        // The owner retired that address. Encrypting to it must not keep
+        // working just because the key as a whole is still valid.
+        guard let key = svc.parseColonOutput(multiUIDKey, wantSecretKeys: false).first else {
+            return XCTFail("Expected one key")
+        }
+        XCTAssertFalse(key.emails.contains("colon@example.com"))
+    }
+
+    func testUnescapeColonField_decodesEscapedColon() {
+        XCTAssertEqual(svc.unescapeColonField("Alice\\x3a The Boss"), "Alice: The Boss")
+        XCTAssertEqual(svc.unescapeColonField("back\\x5cslash"), "back\\slash")
+        XCTAssertEqual(svc.unescapeColonField("nothing to do"), "nothing to do")
+    }
+
     // MARK: - key creation date
 
     func testParseColonOutput_capturesCreationDate() {

@@ -19,13 +19,48 @@ extension GPGServiceImpl {
     ///   uid        — user-id "Name (comment) <email>" (field 9)
     func parseColonOutput(_ output: String, wantSecretKeys: Bool) -> [KeyInfo] {
         var results: [KeyInfo] = []
-        var inKey      = false
+
+        // Per-key accumulator. One KeyInfo is emitted per key, not per user ID:
+        // several entries sharing a fingerprint would collide as Identifiable
+        // rows in the key lists, and the addresses belong to one key anyway.
+        var inKey = false
         var fingerprint = ""
-        var keyID      = ""
-        var validity   = ""   // field[1]: calculated key validity — used only for isRevoked
-        var ownertrust = ""   // field[8]: explicitly-set owner trust — source of TrustLevel
-        var expiry     = ""
-        var created    = ""
+        var keyID       = ""
+        var validity    = ""   // field[1] on the pub/sec record
+        var ownertrust  = ""   // field[8]: explicitly-set owner trust
+        var expiry      = ""
+        var created     = ""
+        var uids: [(name: String, email: String, revoked: Bool)] = []
+
+        func flush() {
+            guard inKey, !fingerprint.isEmpty, !uids.isEmpty else { return }
+            let live = uids.filter { !$0.revoked }
+            // Display the first listed user ID even if every one is revoked, so
+            // the key is still recognisable in the key list.
+            let display = live.first ?? uids[0]
+            let expiryDate:  Date? = Double(expiry).map  { Date(timeIntervalSince1970: $0) }
+            let createdDate: Date? = Double(created).map { Date(timeIntervalSince1970: $0) }
+            let trust: TrustLevel = ownertrust == "n" ? .none
+                                  : TrustLevel(rawValue: ownertrust) ?? .unknown
+            let validityLevel: TrustLevel = validity == "n" ? .none
+                                          : TrustLevel(rawValue: validity) ?? .unknown
+            results.append(KeyInfo(
+                fingerprint: fingerprint,
+                keyID:       fingerprint.count >= 8 ? String(fingerprint.suffix(8)) : keyID,
+                email:       display.email,
+                name:        display.name,
+                trustLevel:  trust,
+                validity:    validityLevel,
+                hasSecretKey: wantSecretKeys,
+                expiresAt:   expiryDate,
+                createdAt:   createdDate,
+                isRevoked:   validity == "r",
+                // Revoked user IDs are excluded: the owner retired that address,
+                // and encrypting to it or accepting a signature from it should
+                // not keep working because the key as a whole is still valid.
+                emails:      live.map { $0.email.lowercased() }.filter { !$0.isEmpty }
+            ))
+        }
 
         for raw in output.components(separatedBy: "\n") {
             let line = raw.hasSuffix("\r") ? String(raw.dropLast()) : raw
@@ -36,6 +71,7 @@ extension GPGServiceImpl {
             case "sec"  where wantSecretKeys,   // secret key available locally
                  "sec#" where wantSecretKeys,    // stub only — key lives on smartcard/YubiKey
                  "pub"  where !wantSecretKeys:
+                flush()
                 inKey       = true
                 keyID       = f.count > 4 ? f[4] : ""
                 validity    = f.count > 1 ? f[1] : ""
@@ -43,47 +79,56 @@ extension GPGServiceImpl {
                 expiry      = f.count > 6 ? f[6] : ""
                 created     = f.count > 5 ? f[5] : ""   // colon field 6: creation date
                 fingerprint = ""
+                uids        = []
 
             case "pub" where wantSecretKeys:
                 // A bare `pub` record inside --list-secret-keys output means
                 // we've moved past the secret key block — stop collecting.
+                flush()
                 inKey = false
+                uids  = []
 
             case "fpr" where inKey && fingerprint.isEmpty:
                 fingerprint = f.count > 9 ? f[9] : ""
 
             case "uid" where inKey && !fingerprint.isEmpty:
-                let uid = f.count > 9 ? f[9] : ""
-                let (name, email) = parseUID(uid)
-                let fp  = fingerprint
-                let kid = fp.count >= 8 ? String(fp.suffix(8)) : keyID
-                // GPG timestamps are Unix epoch strings; empty string means "no expiry".
-                let expiryDate: Date? = Double(expiry).map { Date(timeIntervalSince1970: $0) }
-                let createdDate: Date? = Double(created).map { Date(timeIntervalSince1970: $0) }
-                // GPG ownertrust field uses 'n' (not trusted) which has no direct rawValue
-                // in TrustLevel — map it to .none explicitly.
-                let trust: TrustLevel = ownertrust == "n" ? .none
-                                      : TrustLevel(rawValue: ownertrust) ?? .unknown
-                let validityLevel: TrustLevel = validity == "n" ? .none
-                                              : TrustLevel(rawValue: validity) ?? .unknown
-                results.append(KeyInfo(
-                    fingerprint: fp,
-                    keyID:       kid,
-                    email:       email,
-                    name:        name,
-                    trustLevel:  trust,
-                    validity:    validityLevel,
-                    hasSecretKey: wantSecretKeys,
-                    expiresAt:   expiryDate,
-                    createdAt:   createdDate,
-                    isRevoked:   validity == "r"
-                ))
-                inKey = false  // take only the first uid per primary key
+                let uidValidity = f.count > 1 ? f[1] : ""
+                let (name, email) = parseUID(unescapeColonField(f.count > 9 ? f[9] : ""))
+                uids.append((name: name,
+                             email: email,
+                             revoked: uidValidity == "r" || uidValidity == "e"))
 
             default: break
             }
         }
+        flush()
         return results
+    }
+
+    /// Undo the escaping GPG applies to colon-delimited fields.
+    ///
+    /// A user ID containing a colon arrives as `Alice\x3a The Boss`, and a
+    /// backslash as `\x5c`. Left as-is those sequences show up verbatim in the
+    /// key list, and any address containing one would never match.
+    func unescapeColonField(_ value: String) -> String {
+        guard value.contains("\\x") else { return value }
+        var out = ""
+        var index = value.startIndex
+        while index < value.endIndex {
+            if value[index] == "\\",
+               let x = value.index(index, offsetBy: 1, limitedBy: value.endIndex),
+               x < value.endIndex, value[x] == "x",
+               let end = value.index(index, offsetBy: 4, limitedBy: value.endIndex),
+               let byte = UInt8(value[value.index(index, offsetBy: 2)..<end], radix: 16),
+               let scalar = Unicode.Scalar(UInt32(byte)) {
+                out.append(Character(scalar))
+                index = end
+                continue
+            }
+            out.append(value[index])
+            index = value.index(after: index)
+        }
+        return out
     }
 
     /// Parse a GPG user-ID string in the form `"Name (comment) <email>"`.

@@ -362,7 +362,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 // Otherwise take the most recently created match. Several keys
                 // can carry one address — an old one you stopped using beside
                 // your current one — and GPG lists them in no dependable order.
-                let matching = usable.filter { $0.email.lowercased() == senderEmail }
+                let matching = usable.filter { $0.emails.contains(senderEmail) }
                 let preferredFingerprint = await GPGService.shared.getDefaultSigningKey()
                 let signerKey = matching.first { $0.fingerprint == preferredFingerprint }
                     ?? matching.max { ($0.createdAt ?? .distantPast) < ($1.createdAt ?? .distantPast) }

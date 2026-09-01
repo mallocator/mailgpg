@@ -135,7 +135,7 @@ private struct PublicKeysTab: View {
         if searchText.isEmpty { return keys }
         let q = searchText.lowercased()
         return keys.filter {
-            $0.email.lowercased().contains(q) ||
+            $0.emails.contains(where: { $0.contains(q) }) ||
             $0.name.lowercased().contains(q)
         }
     }

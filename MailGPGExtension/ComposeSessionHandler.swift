@@ -83,7 +83,7 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
             do {
                 let secretKeys = try await GPGService.shared.listSecretKeys()
                 guard let key = secretKeys.first(where: {
-                    $0.email.lowercased() == sender
+                    $0.emails.contains(sender)
                         && !$0.isRevoked
                         && ($0.expiresAt.map { $0 > Date() } ?? true)
                 }) else {
@@ -157,10 +157,12 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
             localKeysByEmail = [:]
         } else {
             do {
+                // One entry per address, not per key: a key carrying three user
+                // IDs must be findable under all three.
                 localKeysByEmail = Dictionary(
                     try await GPGService.shared.listPublicKeys()
                         .filter { !$0.isRevoked && ($0.expiresAt.map { $0 > Date() } ?? true) }
-                        .map { ($0.email.lowercased(), $0) },
+                        .flatMap { key in key.emails.map { ($0, key) } },
                     uniquingKeysWith: { first, _ in first }
                 )
             } catch {

@@ -43,7 +43,7 @@ extension GPGServiceImpl {
             let wanted = email?.lowercased()
             func pick(_ candidates: [KeyInfo]) -> KeyInfo? {
                 if let wanted {
-                    if let exact = candidates.first(where: { $0.email.lowercased() == wanted }) {
+                    if let exact = candidates.first(where: { $0.emails.contains(wanted) }) {
                         return exact
                     }
                 }

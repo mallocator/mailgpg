@@ -14,8 +14,9 @@ struct KeyInfo: Codable, Identifiable, Equatable {
     /// Last 8 hex characters of the fingerprint. Shown in the UI.
     let keyID: String
 
-    /// Primary email address associated with this key.
+    /// The address shown for this key — the first user ID GPG lists.
     let email: String
+
 
     /// Human-readable name from the key's User ID packet.
     let name: String
@@ -45,6 +46,13 @@ struct KeyInfo: Codable, Identifiable, Equatable {
     /// Whether this key has been revoked by its owner.
     /// A revoked key must not be used for encryption or signing.
     let isRevoked: Bool
+    /// Every non-revoked address on this key, lowercased.
+    ///
+    /// A key routinely carries several user IDs: a work address, a personal
+    /// one, an old one. Matching only `email` matched whichever GPG happened to
+    /// list first, which is the most recently added, so a correspondent reached
+    /// at any other address on their own key looked like they had no key.
+    var emails: [String] = []
 
     /// True when this key was found through Web Key Directory — served over
     /// HTTPS from the recipient's own mail domain, at a path derived from their
