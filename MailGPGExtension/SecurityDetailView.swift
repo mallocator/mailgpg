@@ -31,7 +31,10 @@ struct SecurityDetailView: View {
                 if signers.isEmpty {
                     LabeledRow(label: "Signers", value: "None")
                 } else {
-                    ForEach(signers, id: \.fingerprint) { signer in
+                    // Keyed by position, not fingerprint: one key can sign a
+                    // message more than once, and duplicate Identifiable ids
+                    // are undefined behaviour in a ForEach.
+                    ForEach(Array(signers.enumerated()), id: \.offset) { _, signer in
                         SignerRow(signer: signer)
                     }
                 }
@@ -93,8 +96,14 @@ struct SecurityDetailView: View {
     private var subtitle: String {
         switch status {
         case .encrypted(let signers): return signers.isEmpty ? "This message was encrypted with OpenPGP." : "This message was encrypted and signed with OpenPGP."
-        case .signed:            return "The message integrity has been verified."
-        case .signatureInvalid:  return "The signature does not match the message content."
+        case .signed:            return "Signed by the sender, and unaltered since."
+        // Deliberately neutral. This status now covers a signature that does not
+        // match the content, one made by a revoked key, one made by an expired
+        // key, and one whose signer is not the address the message claims to
+        // come from — and the signature does verify in three of those four. The
+        // specific reason is shown in the row below; asserting the wrong one
+        // here is worse than saying less.
+        case .signatureInvalid:  return "This signature cannot be trusted."
         case .decryptionFailed:  return "You may not have the correct private key."
         case .keyNotFound:       return "Signature could not be verified."
         case .plain:             return "Anyone could read or modify this message in transit."

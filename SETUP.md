@@ -264,6 +264,23 @@ the outgoing header never appears, check the raw source of a sent message for an
 `Autocrypt:` line — a very long unfolded header is the most likely thing for
 Mail to mangle, and folding it is the first thing to try.
 
+## Known gap: a failed decryption explains nothing
+
+When decryption fails — you do not hold the key, the ciphertext is damaged —
+`decodedMessage` returns nil and Mail renders the raw MIME. The user sees an
+armoured block and no explanation.
+
+`SecurityStatus.decryptionFailed` exists for exactly this and is never
+produced. The reason is a comment left by the original author: returning an
+`MEDecodedMessage` carrying the original encrypted data makes Mail's indexer
+loop and trip a KVO re-entrancy crash. Given that Mail has already crashed once
+during this work, that is not a claim worth testing casually.
+
+A safer route probably exists — returning decoded data that is a short
+explanation rather than the original ciphertext, so the indexer sees something
+new — but it needs deliberate testing against a mailbox you do not mind
+breaking, not a live one.
+
 ## A MailKit limit worth knowing
 
 `MEMessageActionHandler` — the hook that sees plaintext mail — is invoked only
