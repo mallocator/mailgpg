@@ -387,6 +387,95 @@ final class ParsingTests: XCTestCase {
         XCTAssertNil(key.expiresAt, "No expiry field set, so expiresAt should be nil")
     }
 
+    // MARK: - status output captured from real GPG
+
+    /// These are verbatim from gpg 2.x, not hand-written approximations. Two
+    /// details only show up in the real thing: a user ID can be a bare address
+    /// with no angle brackets, and gpg exits 0 for a signature made by a
+    /// revoked or expired key — so the status lines are the only signal.
+
+    func testRealGPG_goodSignature() {
+        let status = """
+        [GNUPG:] NEWSIG
+        [GNUPG:] KEY_CONSIDERED 1538E321447B19EEBF11D6BAAA1E0D9C2414CED7 0
+        [GNUPG:] SIG_ID sTaSvLEu7ixrkUpDM39iA650AYc 2026-09-01 1788294359
+        [GNUPG:] GOODSIG AA1E0D9C2414CED7 sig@example.com
+        [GNUPG:] VALIDSIG 1538E321447B19EEBF11D6BAAA1E0D9C2414CED7 2026-09-01 1788294359 0 4 0 22 10 00 1538E321447B19EEBF11D6BAAA1E0D9C2414CED7
+        [GNUPG:] TRUST_ULTIMATE 0 pgp
+        """
+        guard case .signed(let signers) = svc.parseVerifyStatus(status: status) else {
+            return XCTFail("Expected .signed")
+        }
+        XCTAssertEqual(signers.first?.keyID, "AA1E0D9C2414CED7")
+        // A bare address with no angle brackets is a valid user ID.
+        XCTAssertEqual(signers.first?.email, "sig@example.com")
+        // VALIDSIG carries the full fingerprint; the short key ID is not enough.
+        XCTAssertEqual(signers.first?.fingerprint,
+                       "1538E321447B19EEBF11D6BAAA1E0D9C2414CED7")
+    }
+
+    func testRealGPG_badSignature() {
+        let status = """
+        [GNUPG:] NEWSIG
+        [GNUPG:] KEY_CONSIDERED 1538E321447B19EEBF11D6BAAA1E0D9C2414CED7 0
+        [GNUPG:] BADSIG AA1E0D9C2414CED7 sig@example.com
+        [GNUPG:] FAILURE gpg-exit 33554433
+        """
+        guard case .signatureInvalid = svc.parseVerifyStatus(status: status) else {
+            return XCTFail("Expected .signatureInvalid")
+        }
+    }
+
+    func testRealGPG_revokedKeyEmitsNoGoodsig() {
+        // gpg exits 0 here. Without reading REVKEYSIG this would look fine.
+        let status = """
+        [GNUPG:] REVKEYSIG 0E63A9F618BBC8B5 revoketest@example.com
+        [GNUPG:] KEYREVOKED
+        """
+        guard case .signatureInvalid(let reason) = svc.parseVerifyStatus(status: status) else {
+            return XCTFail("Expected .signatureInvalid for a revoked key")
+        }
+        XCTAssertTrue(reason.lowercased().contains("revoked"), "got: \(reason)")
+    }
+
+    func testRealGPG_expiredKeyEmitsNoGoodsig() {
+        let status = """
+        [GNUPG:] KEYEXPIRED 1788380856
+        [GNUPG:] EXPKEYSIG 1F3B938459C92644 exp@example.com
+        """
+        guard case .signatureInvalid(let reason) = svc.parseVerifyStatus(status: status) else {
+            return XCTFail("Expected .signatureInvalid for an expired key")
+        }
+        XCTAssertTrue(reason.lowercased().contains("expired"), "got: \(reason)")
+    }
+
+    func testRealGPG_decryptWithEmbeddedSignature() {
+        // DECRYPTION_OKAY comes last, after the signature lines.
+        let status = """
+        [GNUPG:] ENC_TO 81A141E4D0CBF4C7 18 0
+        [GNUPG:] GOODSIG 0B43915FAE5E1CC3 enc@example.com
+        [GNUPG:] VALIDSIG 6EB70BE8A475354A3EB7F8620B43915FAE5E1CC3 2026-09-01 1788294456 0 4 0 22 10 00 6EB70BE8A475354A3EB7F8620B43915FAE5E1CC3
+        [GNUPG:] DECRYPTION_OKAY
+        """
+        guard case .encrypted(let signers) = svc.parseDecryptStatus(status: status) else {
+            return XCTFail("Expected .encrypted")
+        }
+        XCTAssertEqual(signers.first?.email, "enc@example.com")
+        XCTAssertEqual(signers.first?.fingerprint,
+                       "6EB70BE8A475354A3EB7F8620B43915FAE5E1CC3")
+    }
+
+    func testRealGPG_encryptedWithNoSignature() {
+        let status = """
+        [GNUPG:] ENC_TO 81A141E4D0CBF4C7 18 0
+        [GNUPG:] DECRYPTION_OKAY
+        """
+        guard case .encrypted(let signers) = svc.parseDecryptStatus(status: status) else {
+            return XCTFail("Expected .encrypted")
+        }
+        XCTAssertTrue(signers.isEmpty)
+    }
+
     // MARK: - revoked / expired signing keys
 
     func testParseVerifyStatus_revokedKeyIsNotAValidSignature() {
