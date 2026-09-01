@@ -6,11 +6,16 @@
 //
 
 import MailKit
+import os
+
+private let log = Logger(subsystem: "net.pyxzl.mailgpg", category: "extension")
 
 class MailExtension: NSObject, MEExtension {
     func handlerForMessageActions() -> MEMessageActionHandler {
-        // Use a shared instance for all messages, since there's
-        // no state associated with performing actions.
+        // Logged so "Mail never asked for the handler" can be told apart from
+        // "Mail asked for it and never called it" — the two have completely
+        // different causes and the symptom is identical.
+        log.info("handlerForMessageActions requested")
         return MessageActionHandler.shared
     }
 

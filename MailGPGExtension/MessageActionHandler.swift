@@ -10,6 +10,19 @@ class MessageActionHandler: NSObject, MEMessageActionHandler {
 
     static let shared = MessageActionHandler()
 
+    /// Headers this handler needs in order to decide.
+    ///
+    /// MailKit only supplies the headers a handler asks for, and this was never
+    /// implemented — so `message.headers` had nothing in it to match against
+    /// even when the handler ran. It is an optional protocol requirement, which
+    /// is why nothing complained.
+    ///
+    /// Content-Type distinguishes PGP mail; Autocrypt carries a correspondent's
+    /// key; From is what an Autocrypt header must match to be trusted.
+    @objc var requiredHeaders: [String] {
+        ["Content-Type", "Autocrypt", "From"]
+    }
+
     /// Mail calls this as it downloads messages. It is the only hook that sees
     /// plaintext mail — the security handler deliberately ignores anything
     /// without PGP content — which makes it the place to harvest Autocrypt
