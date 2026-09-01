@@ -6,82 +6,32 @@ import os
 
 private let log = Logger(subsystem: "net.pyxzl.mailgpg", category: "actions")
 
+/// Runs as Mail downloads messages. Its only job is harvesting Autocrypt keys —
+/// this is the sole hook that sees plaintext mail, since the security handler
+/// deliberately ignores anything without PGP content.
+///
+/// Note the reach of this hook, because it bounds the feature: MailKit invokes
+/// it only for messages delivered to the Inbox, only at download time, and
+/// never retroactively. Mail that the same Mail instance sent, that a server
+/// files elsewhere, or that arrived before the extension was installed is never
+/// offered here. For Autocrypt that is the right scope anyway — you want keys
+/// from mail people send you.
 class MessageActionHandler: NSObject, MEMessageActionHandler {
 
     static let shared = MessageActionHandler()
 
-    /// Headers this handler needs in order to decide.
-    ///
-    /// MailKit only supplies the headers a handler asks for, and this was never
-    /// implemented — so `message.headers` had nothing in it to match against
-    /// even when the handler ran. It is an optional protocol requirement, which
-    /// is why nothing complained.
-    ///
-    /// Content-Type distinguishes PGP mail; Autocrypt carries a correspondent's
-    /// key; From is what an Autocrypt header must match to be trusted.
+    /// Headers this handler needs. MailKit supplies only what a handler asks
+    /// for, so without this `message.headers` arrives empty and the Autocrypt
+    /// header can never be found. It is an optional protocol requirement, which
+    /// is why omitting it failed silently rather than at compile time.
     @objc var requiredHeaders: [String] {
-        ["Content-Type", "Autocrypt", "From"]
+        ["Autocrypt", "From"]
     }
 
-    /// Mail calls this as it downloads messages. It is the only hook that sees
-    /// plaintext mail — the security handler deliberately ignores anything
-    /// without PGP content — which makes it the place to harvest Autocrypt
-    /// keys, and the only place that can colour a row in the message list.
     func decideAction(for message: MEMessage, completionHandler: @escaping (MEMessageActionDecision?) -> Void) {
         harvestAutocryptKey(from: message)
-        let decision = Self.colourDecision(for: message)
-        log.info("decideAction: headers=\(message.headers?.count ?? -1) decision=\(decision == nil ? "none" : "colour", privacy: .public)")
-        completionHandler(decision)
-    }
-
-    // MARK: - Message list colour
-
-    /// Colour PGP mail in the message list.
-    ///
-    /// Returns nil for everything else rather than clearing the colour: Mail's
-    /// background colour is also the user's own, set by their rules, and an
-    /// extension that reset it on every message it did not care about would
-    /// quietly wipe that.
-    ///
-    /// The decision is made from headers alone. Asking for the body would mean
-    /// `invokeAgainWithBody` on every message in the mailbox, which is a large
-    /// cost for the one case it adds — inline PGP, which arrives without any
-    /// distinguishing header.
-    private static func colourDecision(for message: MEMessage) -> MEMessageActionDecision? {
-        guard GPGService.shared.getColourPGPMessages() else { return nil }
-        guard let headers = message.headers else {
-            log.info("colour: message has no headers")
-            return nil
-        }
-
-        // Join every value of the header rather than taking the first. A
-        // Content-Type is routinely folded across lines by the sending client
-        // or a relay, and the protocol parameter — the part that distinguishes
-        // PGP from S/MIME — is exactly what ends up on the continuation line.
-        // Taking `.first` found "multipart/encrypted;" and none of the rest.
-        let contentType = Self.headerValue("content-type", in: headers)
-        let allHeaders = headers.values.flatMap { $0 }.joined(separator: " ").lowercased()
-
-        log.info("colour: content-type=\(contentType.prefix(120), privacy: .public)")
-
-        if contentType.contains("multipart/encrypted") {
-            return MEMessageActionDecision.action(MEMessageAction.setBackgroundColor(.blue))
-        }
-        if contentType.contains("multipart/signed"),
-           allHeaders.contains("application/pgp-signature") {
-            // Grey, not green: nothing has verified this signature yet. Green
-            // would promise a check that happens later, when the message is
-            // opened and the security handler actually runs.
-            return MEMessageActionDecision.action(MEMessageAction.setBackgroundColor(.gray))
-        }
-        return nil
-    }
-
-    /// All values of a header, joined and lowercased. MEMessage.headers maps a
-    /// name to an array, and a folded header can arrive as several entries.
-    private static func headerValue(_ name: String, in headers: [String: [String]]) -> String {
-        guard let key = headers.keys.first(where: { $0.lowercased() == name }) else { return "" }
-        return (headers[key] ?? []).joined(separator: " ").lowercased()
+        // No action on the message itself.
+        completionHandler(nil)
     }
 
     // MARK: - Autocrypt

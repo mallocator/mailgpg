@@ -264,6 +264,26 @@ the outgoing header never appears, check the raw source of a sent message for an
 `Autocrypt:` line — a very long unfolded header is the most likely thing for
 Mail to mangle, and folding it is the first thing to try.
 
+## A MailKit limit worth knowing
+
+`MEMessageActionHandler` — the hook that sees plaintext mail — is invoked only
+for messages delivered to the **Inbox**, only at download time, and never
+retroactively. Mail that this same Mail instance sent, that the server files
+into another mailbox, or that arrived before the extension was installed is
+never offered to it. Two developers report the same on Apple's forums, and it
+matches what the logs here show: for self-addressed mail Mail does not even ask
+for the handler.
+
+This bounds Autocrypt harvesting, which is fine — keys from mail people send you
+is exactly the intended scope. It also killed an attempt to tint PGP mail in the
+message list: the colouring worked only through this hook, so it could never
+have coloured a Sent copy or anything already downloaded. The feature was
+removed rather than shipped as something that appears broken.
+
+It also means testing anything on this path requires a message from outside —
+sending to yourself from the same Mail instance produces no Inbox delivery and
+no handler call.
+
 ## When PGP is offered at all
 
 Signing and encryption used to be offered on every message the moment the host
