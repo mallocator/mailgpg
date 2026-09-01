@@ -2,6 +2,7 @@
 // MailGPG (host app only)
 
 import Foundation
+import os
 
 /// The Mach service name both sides must agree on.
 /// Think of it like a port number — the extension dials this name,
@@ -26,7 +27,7 @@ final class GPGServiceListener: NSObject, NSXPCListenerDelegate {
     /// Call once at app launch. The listener runs until the app quits.
     func start() {
         listener.resume()
-        print("[GPGServiceListener] Listening on \(GPGServiceName)")
+        log.info("listener started on \(GPGServiceName, privacy: .public)")
     }
 
     // MARK: - NSXPCListenerDelegate
@@ -41,7 +42,10 @@ final class GPGServiceListener: NSObject, NSXPCListenerDelegate {
         // Security check: only accept connections from our own extension.
         // Without this, any app on the machine could ask us to run GPG.
         guard isConnectionFromOurExtension(connection) else {
-            print("[GPGServiceListener] Rejected connection from unknown client")
+            // Worth an error rather than a debug line: on a healthy machine this
+              // never happens, and when it does it is either a broken install or
+              // something local trying to use our keys.
+            log.error("rejected XPC connection from a client that does not match our signing identity")
             return false
         }
 
@@ -54,7 +58,7 @@ final class GPGServiceListener: NSObject, NSXPCListenerDelegate {
         // Must call resume() or the connection stays suspended and nothing works.
         connection.resume()
 
-        print("[GPGServiceListener] Accepted connection from extension")
+        log.info("accepted XPC connection from the Mail extension")
         return true
     }
 

@@ -2,6 +2,9 @@
 // MailGPGExtension (extension only)
 
 import Foundation
+import os
+
+private let log = Logger(subsystem: "net.pyxzl.mailgpg", category: "xpc")
 
 /// Manages the lifecycle of the XPC connection from the extension to the host app.
 ///
@@ -36,6 +39,16 @@ final class GPGServiceConnection {
     private var connection: NSXPCConnection?
     private var retryCount = 0
 
+    /// Guards the three mutable fields below.
+    ///
+    /// `proxy()` is called from the GPGService actor, but XPC delivers its
+    /// interruption and invalidation handlers on its own queues, and the
+    /// reconnect runs in a detached Task — so these are written from several
+    /// threads with no relationship to each other. Concurrent access to a
+    /// Swift var is undefined behaviour, and here it would corrupt an object
+    /// reference.
+    private let lock = NSLock()
+
     /// `true` while a valid connection exists. Observed by `GPGService`
     /// to decide whether to surface a "host app not running" error.
     private(set) var isAvailable = false
@@ -49,9 +62,16 @@ final class GPGServiceConnection {
     /// Returns a proxy object the caller can cast to `GPGXPCProtocol` and call methods on.
     /// Throws `GPGXPCError.hostAppNotRunning` if no connection is available.
     func proxy() throws -> GPGXPCProtocol {
-        if connection == nil { connect() }
+        lock.lock()
+        let existing = connection
+        lock.unlock()
+        if existing == nil { connect() }
 
-        guard let conn = connection else {
+        lock.lock()
+        let current = connection
+        lock.unlock()
+
+        guard let conn = current else {
             throw GPGXPCError.make(.hostAppNotRunning,
                 message: "MailGPG host app is not running. Please open it to enable GPG operations.")
         }
@@ -61,7 +81,7 @@ final class GPGServiceConnection {
         // which we route into our availability tracking.
         let proxy = conn.remoteObjectProxyWithErrorHandler { [weak self] error in
             let nsError = error as NSError
-            print("[GPGServiceConnection] Remote error (domain=\(nsError.domain) code=\(nsError.code))")
+            log.error("remote error domain=\(nsError.domain, privacy: .public) code=\(nsError.code)")
             self?.handleInvalidation()
         }
 
@@ -86,35 +106,44 @@ final class GPGServiceConnection {
         // Interruption = host app crashed but will restart. XPC buffers outgoing
         // calls and replays them once the host app reconnects. We just log it.
         conn.interruptionHandler = { [weak self] in
-            print("[GPGServiceConnection] Connection interrupted (host app may have crashed)")
+            log.error("connection interrupted — host app may have crashed")
             self?.setAvailable(false)
         }
 
         // Invalidation = host app quit cleanly or was killed. The connection
         // object is now dead and must be replaced. We schedule a reconnect.
         conn.invalidationHandler = { [weak self] in
-            print("[GPGServiceConnection] Connection invalidated (host app quit)")
+            log.info("connection invalidated — host app quit")
             self?.handleInvalidation()
         }
 
         conn.resume()
+        lock.lock()
         connection = conn
+        // A successful connection ends the incident. Without this the retry
+        // budget was spent once for the lifetime of the extension rather than
+        // once per outage, so the fourth time the host app ever restarted, the
+        // extension stopped reconnecting on its own.
+        retryCount = 0
+        lock.unlock()
         setAvailable(true)
-        print("[GPGServiceConnection] Connected to \(serviceName)")
+        log.info("connected to \(self.serviceName, privacy: .public)")
     }
 
     private func handleInvalidation() {
+        lock.lock()
         connection = nil
+        let attempts = retryCount
+        if attempts < maxRetries { retryCount += 1 } else { retryCount = 0 }
+        lock.unlock()
         setAvailable(false)
 
-        guard retryCount < maxRetries else {
-            print("[GPGServiceConnection] Max retries reached — giving up")
-            retryCount = 0   // reset so the next user-triggered proxy() call gets a fresh round
+        guard attempts < maxRetries else {
+            log.error("max reconnect attempts reached — waiting for the next request")
             return
         }
 
-        retryCount += 1
-        print("[GPGServiceConnection] Scheduling reconnect attempt \(retryCount)/\(maxRetries)")
+        log.info("scheduling reconnect attempt \(attempts + 1)/\(self.maxRetries)")
 
         // `Task` here runs in the Swift concurrency pool. We sleep, then try again.
         Task { [weak self] in
@@ -125,8 +154,14 @@ final class GPGServiceConnection {
     }
 
     private func setAvailable(_ value: Bool) {
+        lock.lock()
         isAvailable = value
-        onAvailabilityChanged?(value)
+        let notify = onAvailabilityChanged
+        lock.unlock()
+        // Called outside the lock: the callback runs GPGService code, and
+        // holding our lock across it invites a deadlock the day that code
+        // calls back into this class.
+        notify?(value)
     }
 
     // MARK: - XPC array type registration
