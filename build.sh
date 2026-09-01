@@ -10,6 +10,12 @@ MACH_SERVICE="net.pyxzl.mailgpg.gpgservice"
 APP_PATH="/Applications/MailGPG.app"
 PLIST="$HOME/Library/LaunchAgents/${LAUNCH_LABEL}.plist"
 DERIVED="$(mktemp -d)"
+REPO="$(cd "$(dirname "$0")" && pwd)"
+# The log lands in the repo rather than a temp dir so it can be read from
+# anywhere with access to this folder — including a session that has no Xcode.
+LOG="$REPO/build-last.log"
+RUN_TESTS=0
+[ "${1:-}" = "--test" ] && RUN_TESTS=1
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 
@@ -41,7 +47,7 @@ else
 fi
 
 say "Building"
-BUILD_LOG="$DERIVED/build.log"
+BUILD_LOG="$LOG"
 set +e
 xcodebuild \
   -project MailGPG.xcodeproj \
@@ -63,8 +69,7 @@ if [ $BUILD_STATUS -ne 0 ]; then
   # then repeats a wall of command lines at the end. Show only the former.
   grep -E "^/.*:[0-9]+:[0-9]+: (error|warning):" "$BUILD_LOG" | sort -u | head -60
   echo "------------------------------------------------------------"
-  echo "Full log kept at: $BUILD_LOG"
-  echo "(that directory is not cleaned up on failure)"
+  echo "Full log: $BUILD_LOG"
   exit 1
 fi
 
@@ -127,6 +132,27 @@ PLISTEOF
 launchctl bootstrap "gui/$UID" "$PLIST"
 sleep 2
 launchctl print "gui/$UID/$LAUNCH_LABEL" | grep -E "state|pid" || true
+
+if [ "$RUN_TESTS" = "1" ]; then
+  say "Running tests"
+  set +e
+  xcodebuild test \
+    -project MailGPG.xcodeproj \
+    -scheme MailGPG \
+    -destination 'platform=macOS' \
+    -derivedDataPath "$DERIVED" \
+    CODE_SIGNING_ALLOWED=NO \
+    > "$REPO/test-last.log" 2>&1
+  TEST_STATUS=$?
+  set -e
+  grep -E "^Test Suite .* (passed|failed)|error:|XCTAssert.* failed" "$REPO/test-last.log" \
+    | sort -u | head -40 || true
+  if [ $TEST_STATUS -ne 0 ]; then
+    echo "Tests FAILED — full log: $REPO/test-last.log"
+  else
+    echo "Tests passed — full log: $REPO/test-last.log"
+  fi
+fi
 
 rm -rf "$DERIVED"
 

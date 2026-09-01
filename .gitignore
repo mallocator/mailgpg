@@ -73,3 +73,5 @@ Agents.md
 .claude
 .codex
 .gemini
+build-last.log
+test-last.log
