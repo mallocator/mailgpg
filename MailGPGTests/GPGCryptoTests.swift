@@ -29,6 +29,94 @@ final class GPGCryptoTests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    // MARK: - Non-UTF-8 bodies, end to end through real GPG
+
+    /// A message whose body is iso-8859-1 — not valid UTF-8. Every String
+    /// round-trip that used to sit in this pipeline either lost this body or
+    /// re-encoded it, and re-encoding is what makes a signature stop verifying.
+    private static func latin1Message() -> Data {
+        var msg = Data("""
+        From: mailgpg-test@example.com\n\
+        To: mailgpg-test@example.com\n\
+        Subject: Umlaut\n\
+        Content-Type: text/plain; charset=iso-8859-1\n\
+        \n
+        """.utf8)
+        msg.append(contentsOf: [0x66, 0xFC, 0x72])   // "für" in iso-8859-1
+        return msg
+    }
+
+    func testEncryptDecryptRoundTrip_latin1BodySurvives() throws {
+        let message = Self.latin1Message()
+
+        var encrypted: Data?
+        let encSem = DispatchSemaphore(value: 0)
+        svc.encrypt(data: message,
+                    recipientFingerprints: [homedir.fingerprint],
+                    hiddenRecipientFingerprints: []) { data, error in
+            XCTAssertNil(error, "Encrypt error: \(String(describing: error))")
+            encrypted = data
+            encSem.signal()
+        }
+        encSem.wait()
+        guard let encrypted else { return XCTFail("No ciphertext") }
+
+        var plain: Data?
+        let decSem = DispatchSemaphore(value: 0)
+        svc.decrypt(data: encrypted) { data, _, error in
+            XCTAssertNil(error, "Decrypt error: \(String(describing: error))")
+            plain = data
+            decSem.signal()
+        }
+        decSem.wait()
+        guard let plain else { return XCTFail("No plaintext") }
+
+        let (headers, body) = svc.splitMessage(plain)
+        XCTAssertFalse(body.isEmpty, "The body must survive the round trip")
+        XCTAssertTrue(body.contains(0xFC), "The original byte must come back unchanged")
+        XCTAssertTrue(headers.lowercased().contains("iso-8859-1"),
+                      "The charset must still describe the bytes")
+    }
+
+    func testSignVerifyRoundTrip_latin1BodyStillVerifies() throws {
+        let message = Self.latin1Message()
+
+        var signed: Data?
+        let sigSem = DispatchSemaphore(value: 0)
+        svc.sign(data: message, signerKeyID: homedir.fingerprint) { data, error in
+            XCTAssertNil(error, "Sign error: \(String(describing: error))")
+            signed = data
+            sigSem.signal()
+        }
+        sigSem.wait()
+        guard let signed else { return XCTFail("No signed message") }
+        XCTAssertTrue(signed.contains(0xFC), "The signed message must carry the original byte")
+
+        // Pull the parts back out the way the extension does, and verify.
+        let (headers, _) = svc.splitMessage(signed)
+        XCTAssertTrue(headers.lowercased().contains("multipart/signed"))
+
+        guard let boundary = svc.foldedHeaderValue("content-type", in: headers)?
+            .components(separatedBy: "boundary=\"").last?
+            .components(separatedBy: "\"").first else {
+            return XCTFail("No boundary")
+        }
+
+        // Count boundary occurrences by hand: Data.split takes a single byte,
+        // not a byte sequence.
+        let delimiter = Data(("--" + boundary).utf8)
+        var occurrences = 0
+        var cursor = signed.startIndex
+        while let hit = signed.range(of: delimiter, in: cursor..<signed.endIndex) {
+            occurrences += 1
+            cursor = hit.upperBound
+        }
+        XCTAssertGreaterThanOrEqual(occurrences, 3,
+            "Expected an opening boundary, one between the parts, and the closing one")
+        XCTAssertNotNil(signed.range(of: Data("-----BEGIN PGP SIGNATURE-----".utf8)),
+                        "The detached signature must be present")
+    }
+
     // MARK: - Encrypt / Decrypt
 
     func testEncryptDecryptRoundTrip() throws {
