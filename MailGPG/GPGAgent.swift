@@ -34,14 +34,36 @@ struct GPGAgent {
     ///
     /// Call this before any GPG operation that may need a passphrase or card PIN
     /// so the agent socket exists before GPG tries to connect to it.
+    private static let launchLock = NSLock()
+    private static var lastLaunch: Date?
+    /// How long a successful launch is trusted before checking again.
+    private static let launchTrustWindow: TimeInterval = 60
+
     @discardableResult
     static func ensureRunning() throws -> Bool {
+        // Called before every sign, encrypt, decrypt and verify. `gpgconf
+        // --launch` is a no-op when the agent is up, but it is still a process
+        // spawn per operation — and Mail can ask to decode the same mailbox
+        // many times over. Trust a recent successful launch instead.
+        launchLock.lock()
+        let recentlyLaunched = lastLaunch.map {
+            Date().timeIntervalSince($0) < launchTrustWindow
+        } ?? false
+        launchLock.unlock()
+        if recentlyLaunched { return true }
+
         let gpgconf = try toolPath("gpgconf")
         guard FileManager.default.isExecutableFile(atPath: gpgconf) else {
             // Older GPG without gpgconf — agent auto-starts on first use.
             return false
         }
-        return run(gpgconf, args: ["--launch", "gpg-agent"])
+        let launched = run(gpgconf, args: ["--launch", "gpg-agent"])
+        if launched {
+            launchLock.lock()
+            lastLaunch = Date()
+            launchLock.unlock()
+        }
+        return launched
     }
 
     /// Kill the running agent and start a fresh one.
@@ -49,6 +71,9 @@ struct GPGAgent {
     static func restart() throws {
         let gpgconf = try toolPath("gpgconf")
         run(gpgconf, args: ["--kill", "gpg-agent"])
+        launchLock.lock()
+        lastLaunch = nil          // the agent we trusted is the one we just killed
+        launchLock.unlock()
         try ensureRunning()
     }
 
@@ -90,10 +115,18 @@ struct GPGAgent {
     static func checkPinentry() -> PinentryStatus {
         let content = (try? String(contentsOf: agentConfURL, encoding: .utf8)) ?? ""
 
+        // Take the LAST pinentry-program line, not the first: gpg-agent honours
+        // the final occurrence of an option, so reporting on the first would
+        // call a config healthy while the agent used a different, broken entry.
+        var configured: String?
         for line in content.components(separatedBy: "\n") {
             let t = line.trimmingCharacters(in: .whitespaces)
             guard !t.hasPrefix("#"), t.hasPrefix("pinentry-program") else { continue }
-            let path = String(t.dropFirst("pinentry-program".count)).trimmingCharacters(in: .whitespaces)
+            configured = String(t.dropFirst("pinentry-program".count))
+                .trimmingCharacters(in: .whitespaces)
+        }
+
+        if let path = configured {
             let isMac = path.contains("pinentry-mac") || path.contains("pinentry-touchid")
             if isMac && FileManager.default.isExecutableFile(atPath: path) {
                 return .ok(path: path)
@@ -116,7 +149,9 @@ struct GPGAgent {
         var lines = (try? String(contentsOf: agentConfURL, encoding: .utf8))?
             .components(separatedBy: "\n") ?? []
 
-        // Remove any existing pinentry-program line (active or commented).
+        // Remove any existing active pinentry-program line. Commented-out
+        // lines are left alone — they start with '#', so they do not match, and
+        // they are the user's own notes rather than live configuration.
         lines = lines.filter {
             !$0.trimmingCharacters(in: .whitespaces)
                 .lowercased().hasPrefix("pinentry-program")
@@ -146,7 +181,16 @@ struct GPGAgent {
         p.environment = env
         p.standardOutput = FileHandle.nullDevice
         p.standardError  = FileHandle.nullDevice
-        try? p.run()
+        // `waitUntilExit()` raises if the process never launched, and the throw
+        // from `run()` was being swallowed with `try?` — so a missing or
+        // non-executable gpgconf took the host app down with an uncaught
+        // exception instead of returning false. restart() reaches here without
+        // checking the path first, which is exactly that case.
+        do {
+            try p.run()
+        } catch {
+            return false
+        }
         p.waitUntilExit()
         return p.terminationStatus == 0
     }

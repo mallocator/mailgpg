@@ -39,6 +39,28 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
             .joined(separator: "\r\n ")
     }
 
+    /// True when every CRLF in the value is followed by a space or tab, i.e.
+    /// the value can only fold its own field and can never terminate it.
+    static func foldsSafely(_ value: String) -> Bool {
+        let scalars = Array(value.unicodeScalars)
+        var index = 0
+        while index < scalars.count {
+            if scalars[index] == "\r" || scalars[index] == "\n" {
+                // Normalise CRLF to a single break, then require WSP after it.
+                var next = index + 1
+                if scalars[index] == "\r", next < scalars.count, scalars[next] == "\n" {
+                    next += 1
+                }
+                guard next < scalars.count,
+                      scalars[next] == " " || scalars[next] == "\t" else { return false }
+                index = next + 1
+                continue
+            }
+            index += 1
+        }
+        return true
+    }
+
     /// Build this session's Autocrypt header ahead of time.
     ///
     /// `additionalHeaders` has to answer synchronously and GPG lives across an
@@ -73,6 +95,17 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
                 // the 78-octet recommendation.
                 let header = "addr=\(sender); prefer-encrypt=nopreference;\r\n"
                            + " keydata=" + Self.foldedBase64(keyData)
+
+                // We hand Mail a value containing CRLF so the header folds
+                // rather than running past RFC 5322's 998-octet line limit. The
+                // difference between folding and header injection is one rule:
+                // every CRLF must be followed by whitespace. Check it rather
+                // than trust it — a value that could break out of its own field
+                // would let anything in an address or key corrupt the message.
+                guard Self.foldsSafely(header) else {
+                    log.error("autocrypt: refusing to emit a header that is not safely folded")
+                    return
+                }
                 await MainActor.run { state.autocryptHeader = header }
                 log.info("autocrypt: header prepared (\(keyData.count) key bytes)")
             } catch {
