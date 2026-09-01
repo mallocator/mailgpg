@@ -16,7 +16,9 @@ class MessageActionHandler: NSObject, MEMessageActionHandler {
     /// keys, and the only place that can colour a row in the message list.
     func decideAction(for message: MEMessage, completionHandler: @escaping (MEMessageActionDecision?) -> Void) {
         harvestAutocryptKey(from: message)
-        completionHandler(Self.colourDecision(for: message))
+        let decision = Self.colourDecision(for: message)
+        log.info("decideAction: headers=\(message.headers?.count ?? -1) decision=\(decision == nil ? "none" : "colour", privacy: .public)")
+        completionHandler(decision)
     }
 
     // MARK: - Message list colour
@@ -34,22 +36,39 @@ class MessageActionHandler: NSObject, MEMessageActionHandler {
     /// distinguishing header.
     private static func colourDecision(for message: MEMessage) -> MEMessageActionDecision? {
         guard GPGService.shared.getColourPGPMessages() else { return nil }
-        guard let headers = message.headers,
-              let contentTypeKey = headers.keys.first(where: { $0.lowercased() == "content-type" }),
-              let contentType = headers[contentTypeKey]?.first?.lowercased() else { return nil }
+        guard let headers = message.headers else {
+            log.info("colour: message has no headers")
+            return nil
+        }
 
-        if contentType.contains("multipart/encrypted"),
-           contentType.contains("application/pgp-encrypted") {
+        // Join every value of the header rather than taking the first. A
+        // Content-Type is routinely folded across lines by the sending client
+        // or a relay, and the protocol parameter — the part that distinguishes
+        // PGP from S/MIME — is exactly what ends up on the continuation line.
+        // Taking `.first` found "multipart/encrypted;" and none of the rest.
+        let contentType = Self.headerValue("content-type", in: headers)
+        let allHeaders = headers.values.flatMap { $0 }.joined(separator: " ").lowercased()
+
+        log.info("colour: content-type=\(contentType.prefix(120), privacy: .public)")
+
+        if contentType.contains("multipart/encrypted") {
             return MEMessageActionDecision.action(MEMessageAction.setBackgroundColor(.blue))
         }
         if contentType.contains("multipart/signed"),
-           contentType.contains("application/pgp-signature") {
+           allHeaders.contains("application/pgp-signature") {
             // Grey, not green: nothing has verified this signature yet. Green
             // would promise a check that happens later, when the message is
             // opened and the security handler actually runs.
             return MEMessageActionDecision.action(MEMessageAction.setBackgroundColor(.gray))
         }
         return nil
+    }
+
+    /// All values of a header, joined and lowercased. MEMessage.headers maps a
+    /// name to an array, and a folded header can arrive as several entries.
+    private static func headerValue(_ name: String, in headers: [String: [String]]) -> String {
+        guard let key = headers.keys.first(where: { $0.lowercased() == name }) else { return "" }
+        return (headers[key] ?? []).joined(separator: " ").lowercased()
     }
 
     // MARK: - Autocrypt
