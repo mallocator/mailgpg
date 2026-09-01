@@ -230,6 +230,7 @@ private struct PGPOptionsToggles: View {
     @State private var knownOnly: Bool = GPGService.shared.getKnownCorrespondentsOnly()
     @State private var autocryptEnabled: Bool = GPGService.shared.getAutocryptEnabled()
     @State private var protectSubject: Bool = GPGService.shared.getProtectSubject()
+    @State private var colourMessages: Bool = GPGService.shared.getColourPGPMessages()
 
     private static let knownOnlyHelp = """
         Signing and encryption are offered only for people who have sent you PGP \
@@ -242,6 +243,12 @@ private struct PGPOptionsToggles: View {
         Adds your public key to outgoing mail as an Autocrypt header, and picks up \
         correspondents' keys from the mail they send you — so key exchange happens \
         through the correspondence instead of a keyserver.
+        """
+
+    private static let colourHelp = """
+        Tints encrypted mail blue and signed mail grey in the message list. \
+        Grey rather than green for signed: nothing has verified the signature at \
+        the point the list is drawn.
         """
 
     private static let protectSubjectHelp = """
@@ -262,6 +269,12 @@ private struct PGPOptionsToggles: View {
                     GPGService.shared.setAutocryptEnabled(value)
                 }
                 .help(Self.autocryptHelp)
+
+            Toggle("Colour PGP mail in the message list", isOn: $colourMessages)
+                .onChange(of: colourMessages) { _, value in
+                    GPGService.shared.setColourPGPMessages(value)
+                }
+                .help(Self.colourHelp)
 
             Toggle("Hide subject line", isOn: $protectSubject)
                 .onChange(of: protectSubject) { _, value in

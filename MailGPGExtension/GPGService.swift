@@ -268,6 +268,16 @@ actor GPGService {
 
     // MARK: - Autocrypt
 
+    /// Whether PGP mail is tinted in the message list. On by default — it is
+    /// purely informational and reversible.
+    nonisolated func getColourPGPMessages() -> Bool {
+        Self.defaults?.object(forKey: "colourPGPMessages") as? Bool ?? true
+    }
+
+    nonisolated func setColourPGPMessages(_ enabled: Bool) {
+        Self.defaults?.set(enabled, forKey: "colourPGPMessages")
+    }
+
     /// Whether outgoing mail carries an Autocrypt header. Off by default.
     nonisolated func getAutocryptEnabled() -> Bool {
         Self.defaults?.bool(forKey: "autocryptEnabled") ?? false

@@ -19,6 +19,8 @@
 		1FE946972F6AAE4C0049A0F8 /* SecurityStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FE946962F6AAE4C0049A0F8 /* SecurityStatus.swift */; };
 		1FE946982F6AAE4C0049A0F8 /* SecurityStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FE946962F6AAE4C0049A0F8 /* SecurityStatus.swift */; };
 		B865AAE3664A45DB8D022CEA /* TrustLevel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E740A487D0E04695BEC7B959 /* TrustLevel.swift */; };
+		AC70000000000000000AC002 /* AutocryptHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC70000000000000000AC001 /* AutocryptHeader.swift */; };
+		AC70000000000000000AC003 /* AutocryptHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC70000000000000000AC001 /* AutocryptHeader.swift */; };
 		C44923A61DF642298128C68C /* TrustLevel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E740A487D0E04695BEC7B959 /* TrustLevel.swift */; };
 /* End PBXBuildFile section */
 
@@ -69,6 +71,7 @@
 		AABB0002AABB0002AABB0002 /* MailGPGTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MailGPGTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AABB00CC00CCAABB00CC00CC /* MailGPG.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = MailGPG.xctestplan; sourceTree = "<group>"; };
 		E740A487D0E04695BEC7B959 /* TrustLevel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustLevel.swift; sourceTree = "<group>"; };
+		AC70000000000000000AC001 /* AutocryptHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutocryptHeader.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -136,6 +139,7 @@
 				1F3247A82F69F9C000156831 /* GPGXPCProtocol.swift */,
 				1F3247A92F69F9C000156831 /* KeyInfo.swift */,
 				E740A487D0E04695BEC7B959 /* TrustLevel.swift */,
+				AC70000000000000000AC001 /* AutocryptHeader.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -341,6 +345,7 @@
 				1F3247AB2F69F9C000156831 /* GPGXPCError.swift in Sources */,
 				1F3247AC2F69F9C000156831 /* GPGXPCProtocol.swift in Sources */,
 				B865AAE3664A45DB8D022CEA /* TrustLevel.swift in Sources */,
+				AC70000000000000000AC002 /* AutocryptHeader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -354,6 +359,7 @@
 				1F3247AF2F69F9C000156831 /* GPGXPCProtocol.swift in Sources */,
 				1F795F852F712CED00FF6227 /* SystemStatus.swift in Sources */,
 				C44923A61DF642298128C68C /* TrustLevel.swift in Sources */,
+				AC70000000000000000AC003 /* AutocryptHeader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

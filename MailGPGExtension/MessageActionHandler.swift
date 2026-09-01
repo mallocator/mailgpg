@@ -4,22 +4,52 @@
 import MailKit
 import os
 
-private let log = Logger(subsystem: "net.pyxzl.mailgpg", category: "autocrypt")
+private let log = Logger(subsystem: "net.pyxzl.mailgpg", category: "actions")
 
 class MessageActionHandler: NSObject, MEMessageActionHandler {
 
     static let shared = MessageActionHandler()
 
+    /// Mail calls this as it downloads messages. It is the only hook that sees
+    /// plaintext mail — the security handler deliberately ignores anything
+    /// without PGP content — which makes it the place to harvest Autocrypt
+    /// keys, and the only place that can colour a row in the message list.
     func decideAction(for message: MEMessage, completionHandler: @escaping (MEMessageActionDecision?) -> Void) {
-        // Harvest the sender's key from an Autocrypt header, if there is one.
-        // Mail calls this as messages are downloaded, which is the only hook
-        // that sees plaintext mail — the security handler deliberately ignores
-        // anything without PGP content, and Autocrypt headers ride on ordinary
-        // messages.
         harvestAutocryptKey(from: message)
+        completionHandler(Self.colourDecision(for: message))
+    }
 
-        // No action on the message itself.
-        completionHandler(nil)
+    // MARK: - Message list colour
+
+    /// Colour PGP mail in the message list.
+    ///
+    /// Returns nil for everything else rather than clearing the colour: Mail's
+    /// background colour is also the user's own, set by their rules, and an
+    /// extension that reset it on every message it did not care about would
+    /// quietly wipe that.
+    ///
+    /// The decision is made from headers alone. Asking for the body would mean
+    /// `invokeAgainWithBody` on every message in the mailbox, which is a large
+    /// cost for the one case it adds — inline PGP, which arrives without any
+    /// distinguishing header.
+    private static func colourDecision(for message: MEMessage) -> MEMessageActionDecision? {
+        guard GPGService.shared.getColourPGPMessages() else { return nil }
+        guard let headers = message.headers,
+              let contentTypeKey = headers.keys.first(where: { $0.lowercased() == "content-type" }),
+              let contentType = headers[contentTypeKey]?.first?.lowercased() else { return nil }
+
+        if contentType.contains("multipart/encrypted"),
+           contentType.contains("application/pgp-encrypted") {
+            return MEMessageActionDecision.action(MEMessageAction.setBackgroundColor(.blue))
+        }
+        if contentType.contains("multipart/signed"),
+           contentType.contains("application/pgp-signature") {
+            // Grey, not green: nothing has verified this signature yet. Green
+            // would promise a check that happens later, when the message is
+            // opened and the security handler actually runs.
+            return MEMessageActionDecision.action(MEMessageAction.setBackgroundColor(.gray))
+        }
+        return nil
     }
 
     // MARK: - Autocrypt
@@ -30,7 +60,7 @@ class MessageActionHandler: NSObject, MEMessageActionHandler {
               let key = headers.keys.first(where: { $0.lowercased() == "autocrypt" }),
               let value = headers[key]?.first else { return }
 
-        guard let parsed = Self.parseAutocryptHeader(value) else {
+        guard let parsed = AutocryptHeader.parse(value) else {
             log.info("autocrypt: header present but unusable")
             return
         }
@@ -55,42 +85,5 @@ class MessageActionHandler: NSObject, MEMessageActionHandler {
                 log.error("autocrypt: import failed")
             }
         }
-    }
-
-    /// Pull `addr` and `keydata` out of an Autocrypt header value.
-    ///
-    /// Attributes are semicolon-separated `name=value` pairs. Any attribute
-    /// whose name starts with an underscore is by spec ignorable; an unknown
-    /// attribute without that prefix means the header must be dropped
-    /// entirely, which is what the `criticalUnknown` check enforces.
-    static func parseAutocryptHeader(_ value: String) -> (addr: String, keyData: Data)? {
-        var addr: String?
-        var keydata: String?
-        var criticalUnknown = false
-
-        for rawAttr in value.components(separatedBy: ";") {
-            let attr = rawAttr.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !attr.isEmpty else { continue }
-            guard let eq = attr.firstIndex(of: "=") else { continue }
-            let name = String(attr[attr.startIndex..<eq]).trimmingCharacters(in: .whitespaces).lowercased()
-            let val  = String(attr[attr.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
-
-            switch name {
-            case "addr":           addr = val.lowercased()
-            case "keydata":        keydata = val
-            case "prefer-encrypt": break
-            default:
-                if !name.hasPrefix("_") { criticalUnknown = true }
-            }
-        }
-
-        guard !criticalUnknown else { return nil }
-        guard let addr, !addr.isEmpty, let keydata else { return nil }
-
-        // Folding puts whitespace through the base64; strip it before decoding.
-        let compact = keydata.filter { !$0.isWhitespace }
-        guard let data = Data(base64Encoded: compact, options: .ignoreUnknownCharacters),
-              !data.isEmpty else { return nil }
-        return (addr, data)
     }
 }
