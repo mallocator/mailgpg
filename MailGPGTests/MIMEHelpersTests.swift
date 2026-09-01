@@ -322,6 +322,54 @@ final class MIMEHelpersTests: XCTestCase {
         XCTAssertEqual(svc.extractPGPPayload(from: data), data)
     }
 
+    // MARK: - non-UTF-8 decrypted bodies
+
+    func testReconstruct_latin1BodySurvives() {
+        // A decrypted body in iso-8859-1 is not valid UTF-8. The old code did
+        // String(data:encoding:.utf8) ?? "" and produced a message with no body
+        // at all — an encrypted mail that opened blank.
+        let outer = Data("""
+        From: alice@example.com\n\
+        Subject: test\n\
+        Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"\n\
+        \n\
+        ciphertext
+        """.utf8)
+
+        var plaintext = Data("Content-Type: text/plain; charset=iso-8859-1\n\n".utf8)
+        // "für" in iso-8859-1: 0xFC is an invalid UTF-8 continuation on its own.
+        plaintext.append(contentsOf: [0x66, 0xFC, 0x72])
+
+        let result = svc.reconstructDecryptedMessage(original: outer, plaintext: plaintext)
+        let (headers, body) = svc.splitMessage(result)
+
+        XCTAssertFalse(body.isEmpty, "Body must survive a non-UTF-8 charset")
+        XCTAssertTrue(body.contains(0xFC), "The original bytes must be preserved, not re-encoded")
+        XCTAssertTrue(headers.lowercased().contains("iso-8859-1"),
+                      "The inner Content-Type should be promoted to the envelope")
+    }
+
+    func testReconstruct_utf8BodyUnchanged() {
+        let outer = Data("From: a@b\nContent-Type: multipart/encrypted\n\ncipher".utf8)
+        let plaintext = Data("Content-Type: text/plain; charset=utf-8\n\nhellö".utf8)
+        let result = svc.reconstructDecryptedMessage(original: outer, plaintext: plaintext)
+        let (_, body) = svc.splitMessage(result)
+        XCTAssertEqual(String(decoding: body, as: UTF8.self), "hellö")
+    }
+
+    func testNormalizeLineEndings_bytesToCRLF() {
+        let input = Data("a\nb\r\nc\rd".utf8)
+        let out = svc.normalizeLineEndings(in: input, to: "\r\n")
+        XCTAssertEqual(String(decoding: out, as: UTF8.self), "a\r\nb\r\nc\r\nd")
+    }
+
+    func testNormalizeLineEndings_preservesNonUTF8Bytes() {
+        var input = Data("a\n".utf8)
+        input.append(0xFC)
+        let out = svc.normalizeLineEndings(in: input, to: "\n")
+        XCTAssertEqual(Array(out), [0x61, 0x0A, 0xFC])
+    }
+
     // MARK: - protected subject
 
     func testProtectedSubject_offByDefault_subjectStaysOutside() {

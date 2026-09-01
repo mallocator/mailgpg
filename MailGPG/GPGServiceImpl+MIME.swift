@@ -380,6 +380,34 @@ extension GPGServiceImpl {
     }
 
     /// Normalize all line endings in text to the given style.
+    /// Normalise line endings in raw bytes, without going through String.
+    ///
+    /// The decrypted body can be in any charset the sender chose. Decoding it
+    /// to normalise would either fail outright — losing the body — or silently
+    /// re-encode it into bytes its own declared charset no longer describes.
+    func normalizeLineEndings(in data: Data, to eol: String) -> Data {
+        let cr: UInt8 = 0x0D, lf: UInt8 = 0x0A
+        let eolBytes = Data(eol.utf8)
+        var out = Data()
+        out.reserveCapacity(data.count + data.count / 8)
+        var index = data.startIndex
+        while index < data.endIndex {
+            let byte = data[index]
+            if byte == cr {
+                let next = data.index(after: index)
+                out.append(eolBytes)
+                index = (next < data.endIndex && data[next] == lf) ? data.index(after: next) : next
+            } else if byte == lf {
+                out.append(eolBytes)
+                index = data.index(after: index)
+            } else {
+                out.append(byte)
+                index = data.index(after: index)
+            }
+        }
+        return out
+    }
+
     private func normalizeLineEndings(in text: String, to eol: String) -> String {
         let lf = text.replacingOccurrences(of: "\r\n", with: "\n")
         return eol == "\r\n" ? lf.replacingOccurrences(of: "\n", with: "\r\n") : lf
@@ -429,7 +457,13 @@ extension GPGServiceImpl {
     /// Extract the raw PGP ciphertext from an incoming message so GPG can decrypt it.
     /// Handles both multipart/encrypted (RFC 3156) and inline PGP.
     func extractPGPPayload(from data: Data) -> Data {
-        guard let str = String(data: data, encoding: .utf8) else { return data }
+        // Decode leniently rather than bailing out. A message carrying any
+        // non-UTF-8 byte anywhere — a Latin-1 display name is enough — used to
+        // skip extraction entirely and hand the whole raw message to gpg, which
+        // then failed to decrypt something perfectly valid. The PGP armour is
+        // ASCII, so substituting replacement characters elsewhere cannot move
+        // the block boundaries.
+        let str = String(decoding: data, as: UTF8.self)
 
         // ── multipart/encrypted (RFC 3156) ───────────────────────────────────
         let (headers, _) = splitMessage(data)
@@ -481,7 +515,10 @@ extension GPGServiceImpl {
     ///    the decrypted bytes are the raw body with no headers. We default to
     ///    text/plain and use the raw bytes as the body.
     func reconstructDecryptedMessage(original: Data, plaintext: Data) -> Data {
-        let plaintextStr = String(data: plaintext, encoding: .utf8) ?? ""
+        // Lenient, never nil. `String(data:encoding:.utf8)` returns nil for a
+        // body in any non-UTF-8 charset — iso-8859-1 is still common — and the
+        // `?? ""` that followed turned that into a message with no body at all.
+        let plaintextStr = String(decoding: plaintext, as: UTF8.self)
 
         // ── inline PGP: replace just the encrypted block, keep surrounding text ──
         if let originalStr = String(data: original, encoding: .utf8),
@@ -510,22 +547,25 @@ extension GPGServiceImpl {
         var contentType = "text/plain; charset=utf-8"
         var contentTransferEncoding: String? = nil
         var subject: String? = nil
-        var body = plaintextStr
+        // The body stays as bytes from here on. Headers are ASCII and safe to
+        // treat as text; the body is whatever charset the sender declared, and
+        // round-tripping it through String would corrupt it even when it did
+        // not lose it outright.
+        var bodyData = plaintext
 
         // Check whether the decrypted content is itself a complete MIME entity.
-        for sep in ["\r\n\r\n", "\n\n"] {
-            if let range = plaintextStr.range(of: sep) {
-                let innerHeaders = String(plaintextStr[..<range.lowerBound])
-                if innerHeaders.lowercased().contains("content-type:") {
-                    if let ct = foldedHeaderValue("content-type", in: innerHeaders) {
-                        contentType = ct
-                    }
-                    contentTransferEncoding = foldedHeaderValue("content-transfer-encoding", in: innerHeaders)
-                    subject = foldedHeaderValue("subject", in: innerHeaders)
-                    body = String(plaintextStr[range.upperBound...])
-        log.info("decrypt: inner MIME entity detected")
+        let separator = plaintext.range(of: Data("\r\n\r\n".utf8))
+                     ?? plaintext.range(of: Data("\n\n".utf8))
+        if let separator {
+            let innerHeaders = String(decoding: plaintext[..<separator.lowerBound], as: UTF8.self)
+            if innerHeaders.lowercased().contains("content-type:") {
+                if let ct = foldedHeaderValue("content-type", in: innerHeaders) {
+                    contentType = ct
                 }
-                break
+                contentTransferEncoding = foldedHeaderValue("content-transfer-encoding", in: innerHeaders)
+                subject = foldedHeaderValue("subject", in: innerHeaders)
+                bodyData = Data(plaintext[separator.upperBound...])
+                log.info("decrypt: inner MIME entity detected")
             }
         }
 
@@ -550,10 +590,11 @@ extension GPGServiceImpl {
         // the reconstructed message has consistent endings. A mismatch (e.g. LF outer
         // headers + CRLF body from GPG output) lets splitMessage() find a \r\n\r\n
         // inside the quoted body when a reply is composed, corrupting the header split.
-        let normalizedBody = normalizeLineEndings(in: body, to: eol)
+        let normalizedBody = normalizeLineEndings(in: bodyData, to: eol)
 
-        let fullMessage = headers + eol + eol + normalizedBody
+        var fullMessage = Data((headers + eol + eol).utf8)
+        fullMessage.append(normalizedBody)
         log.info("decrypt: reconstructed \(fullMessage.count) bytes (plaintext was \(plaintext.count) bytes)")
-        return fullMessage.data(using: .utf8) ?? plaintext
+        return fullMessage
     }
 }
