@@ -322,6 +322,52 @@ final class MIMEHelpersTests: XCTestCase {
         XCTAssertEqual(svc.extractPGPPayload(from: data), data)
     }
 
+    // MARK: - header block never gains a blank line
+
+    func testSetHeader_onHeadersEndingWithNewline() {
+        // A blank line terminates the header block. Emitting one here put the
+        // header we just wrote — and the real body — on the wrong side of the
+        // separator, producing a message whose body was its own headers.
+        let result = svc.setHeader("X-New", to: "1", in: "From: a@b\n")
+        XCTAssertEqual(result, "From: a@b\nX-New: 1")
+        XCTAssertFalse(result.contains("\n\n"))
+    }
+
+    func testSetHeader_onEmptyHeaderBlock() {
+        let result = svc.setHeader("Content-Type", to: "text/plain", in: "")
+        XCTAssertEqual(result, "Content-Type: text/plain")
+        XCTAssertFalse(result.hasPrefix("\n"))
+    }
+
+    func testSetHeader_preservesCRLFAndAppends() {
+        let result = svc.setHeader("X", to: "1", in: "From: a\r\nTo: b\r\n")
+        XCTAssertEqual(result, "From: a\r\nTo: b\r\nX: 1")
+    }
+
+    func testRemoveHeader_onHeadersEndingWithNewline() {
+        let result = svc.removeHeader("subject", from: "From: a@b\nSubject: x\n")
+        XCTAssertEqual(result, "From: a@b")
+    }
+
+    func testFoldedHeaderValue_joinsContinuationLines() {
+        let headers = """
+        From: a@b
+        Content-Type: multipart/encrypted;
+         protocol="application/pgp-encrypted";
+         boundary="XYZ"
+        Subject: hi
+        """
+        let value = svc.foldedHeaderValue("content-type", in: headers)
+        XCTAssertEqual(value, #"multipart/encrypted; protocol="application/pgp-encrypted"; boundary="XYZ""#)
+    }
+
+    func testRemoveHeader_doesNotMatchLongerHeaderNames() {
+        let headers = "Content-Type: text/plain\nContent-Type-Extra: nope\nContent-Transfer-Encoding: 8bit"
+        let result = svc.removeHeader("content-type", from: headers)
+        XCTAssertTrue(result.contains("Content-Type-Extra: nope"))
+        XCTAssertFalse(result.contains("Content-Type: text/plain"))
+    }
+
     // MARK: - charset rewriting
 
     func testWithCharsetUTF8_replacesExisting() {

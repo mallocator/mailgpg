@@ -97,9 +97,16 @@ extension GPGServiceImpl {
 
     /// Split a header block into lines, stripping any trailing CR from each line.
     private func headerLines(from headers: String) -> [String] {
-        headers.components(separatedBy: "\n").map {
-            $0.hasSuffix("\r") ? String($0.dropLast()) : $0
-        }
+        headers.components(separatedBy: "\n")
+            .map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+            // Drop empty entries. A header block contains no empty lines by
+            // definition — an empty line is what ends it — so any that appear
+            // here come from a leading or trailing newline on the input.
+            // Keeping them put a blank line into the output of setHeader, and a
+            // blank line terminates the header block: everything after it,
+            // including the header just written, silently became body.
+            // A whitespace-only line is a fold continuation and is kept.
+            .filter { !$0.isEmpty }
     }
 
     /// Remove a named header (and any folded continuation lines) from a header block.
