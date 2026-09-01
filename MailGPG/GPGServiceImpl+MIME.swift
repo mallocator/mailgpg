@@ -78,11 +78,16 @@ extension GPGServiceImpl {
             splitRange = nil
         }
 
+        // Decode leniently. A single non-UTF-8 byte anywhere in the header
+        // block — a Latin-1 display name in a Received line is enough — used to
+        // yield "" here, discarding every header the rest of the pipeline
+        // depends on. Headers are ASCII by specification, so substituting
+        // replacement characters for stray bytes costs nothing.
         if let r = splitRange {
-            return (String(data: data[..<r.lowerBound], encoding: .utf8) ?? "",
+            return (String(decoding: data[..<r.lowerBound], as: UTF8.self),
                     Data(data[r.upperBound...]))
         }
-        return (String(data: data, encoding: .utf8) ?? "", Data())
+        return (String(decoding: data, as: UTF8.self), Data())
     }
 
     /// Detect whether a string uses CRLF or LF line endings.
@@ -159,7 +164,6 @@ extension GPGServiceImpl {
         let origCT  = foldedHeaderValue("content-type", in: rawHeaders)
                    ?? "text/plain; charset=utf-8"
         let origCTE = foldedHeaderValue("content-transfer-encoding", in: rawHeaders)
-        let bodyStr = String(data: body, encoding: .utf8) ?? ""
 
         // Protected headers (the "Memory Hole" convention, as implemented by
         // Thunderbird, Proton and OpenKeychain): the real Subject travels inside
@@ -178,29 +182,42 @@ extension GPGServiceImpl {
         if let subject {
             entity += "Subject: \(subject)\r\n"
         }
-        entity += "\r\n" + bodyStr
-        return entity.data(using: .utf8) ?? body
+        entity += "\r\n"
+
+        // The body is appended as raw bytes. Decoding it to a String first
+        // returned nil for any non-UTF-8 charset and the `?? ""` that followed
+        // encrypted an empty body — the outgoing twin of the bug that made
+        // received mail appear blank.
+        var entityData = Data(entity.utf8)
+        entityData.append(body)
+        return entityData
     }
 
     /// Build the first MIME body part for a multipart/signed message — the content
     /// that gets signed with `gpg --detach-sign`. RFC 3156 §5: the signature covers
     /// the complete first MIME part (headers + blank line + body), not just the body.
-    func buildSignedPart(rawHeaders: String, body: Data) -> String {
+    /// Returns bytes, not a String: this is the exact content the detached
+    /// signature is computed over, so it has to survive a body in any charset
+    /// untouched. Round-tripping it through String either lost the body
+    /// entirely or re-encoded it, and a signature over re-encoded bytes does
+    /// not verify against what the recipient receives.
+    func buildSignedPart(rawHeaders: String, body: Data) -> Data {
         let eol = lineEnding(in: rawHeaders)
         let origCT  = foldedHeaderValue("content-type", in: rawHeaders)
                    ?? "text/plain; charset=utf-8"
         let origCTE = foldedHeaderValue("content-transfer-encoding", in: rawHeaders)
-        let bodyStr = String(data: body, encoding: .utf8) ?? ""
 
         var part = "Content-Type: \(origCT)" + eol
         if let cte = origCTE {
             part += "Content-Transfer-Encoding: \(cte)" + eol
         }
-        part += eol + bodyStr
-        return part
+        part += eol
+        var partData = Data(part.utf8)
+        partData.append(body)
+        return partData
     }
 
-    func buildSignedMessage(original: Data, signedPart: String, signature: Data) -> Data {
+    func buildSignedMessage(original: Data, signedPart: Data, signature: Data) -> Data {
         let boundary = "MailGPGSig_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
         let (rawHeaders, _) = splitMessage(original)
 
@@ -208,7 +225,7 @@ extension GPGServiceImpl {
         // not CRLF (\r\n). Returning mismatched line endings crashes Mail's MIME parser.
         let eol = lineEnding(in: rawHeaders)
         let origCTE = foldedHeaderValue("content-transfer-encoding", in: rawHeaders)
-        let sigStr  = String(data: signature, encoding: .utf8) ?? ""
+
 
         // MEEncodedOutgoingMessage.rawData must be a complete RFC 2822 message.
         // Strategy: start with the original envelope headers and:
@@ -241,19 +258,18 @@ extension GPGServiceImpl {
         // Assemble the full RFC 2822 message: updated headers + blank line + MIME body.
         // The signedPart is placed byte-for-byte as the first MIME part — this is the
         // exact content the detached signature was computed over.
-        let mime = headers + eol +
-            eol +
-            "--\(boundary)" + eol +
-            signedPart + eol +
-            "--\(boundary)" + eol +
+        var mime = Data((headers + eol + eol + "--\(boundary)" + eol).utf8)
+        mime.append(signedPart)                       // byte-for-byte what was signed
+        mime.append(Data(eol.utf8))
+        mime.append(Data(("--\(boundary)" + eol +
             "Content-Type: application/pgp-signature; name=\"signature.asc\"" + eol +
             "Content-Disposition: attachment; filename=\"signature.asc\"" + eol +
-            eol +
-            sigStr + eol +
-            "--\(boundary)--" + eol
+            eol).utf8))
+        mime.append(signature)                        // ASCII armour
+        mime.append(Data((eol + "--\(boundary)--" + eol).utf8))
 
         log.info("buildSignedMessage: eol=\(eol == "\r\n" ? "CRLF" : "LF") signedPartLen=\(signedPart.count) sigLen=\(signature.count) totalLen=\(mime.count)")
-        return mime.data(using: .utf8) ?? Data()
+        return mime
     }
 
     /// Wrap original message in a PGP/MIME multipart/encrypted envelope.

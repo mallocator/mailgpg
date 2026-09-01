@@ -426,29 +426,59 @@ final class MIMEHelpersTests: XCTestCase {
 
     // MARK: - buildSignedPart
 
+    /// buildSignedPart returns bytes now — this is what the signature covers.
+    private func signedPartText(_ headers: String, _ body: String) -> String {
+        String(decoding: svc.buildSignedPart(rawHeaders: headers,
+                                             body: Data(body.utf8)), as: UTF8.self)
+    }
+
     func testBuildSignedPart_inheritsLFLineEnding() {
-        let headers = "From: a\nContent-Type: text/plain\n"
-        let result  = svc.buildSignedPart(rawHeaders: headers, body: "Hi".data(using: .utf8)!)
+        let result = signedPartText("From: a\nContent-Type: text/plain\n", "Hi")
         XCTAssertFalse(result.contains("\r\n"), "LF message must produce LF signed part; result=\(result.debugDescription)")
     }
 
     func testBuildSignedPart_inheritsCRLFLineEnding() {
-        let headers = "From: a\r\nContent-Type: text/plain\r\n"
-        let result  = svc.buildSignedPart(rawHeaders: headers, body: "Hi".data(using: .utf8)!)
+        let result = signedPartText("From: a\r\nContent-Type: text/plain\r\n", "Hi")
         XCTAssert(result.contains("\r\n"))
     }
 
     func testBuildSignedPart_startsWithContentType() {
         // RFC 3156 §5: signed content starts with Content-Type header, not envelope headers
-        let headers = "From: a\nContent-Type: text/plain; charset=utf-8\n"
-        let result  = svc.buildSignedPart(rawHeaders: headers, body: "Body".data(using: .utf8)!)
+        let result = signedPartText("From: a\nContent-Type: text/plain; charset=utf-8\n", "Body")
         XCTAssert(result.hasPrefix("Content-Type:"), "result=\(result.debugDescription)")
     }
 
     func testBuildSignedPart_hasBlankLineBeforeBody() {
-        let headers = "From: a\nContent-Type: text/plain\n"
-        let result  = svc.buildSignedPart(rawHeaders: headers, body: "TheBody".data(using: .utf8)!)
+        let result = signedPartText("From: a\nContent-Type: text/plain\n", "TheBody")
         XCTAssert(result.contains("\n\nTheBody"), "result=\(result.debugDescription)")
+    }
+
+    func testBuildSignedPart_preservesNonUTF8Body() {
+        // The signature is computed over these exact bytes. Losing or
+        // re-encoding them means the recipient verifies a different message
+        // than the one that was signed.
+        var body = Data("f".utf8)
+        body.append(0xFC)                      // 'ü' in iso-8859-1
+        let part = svc.buildSignedPart(rawHeaders: "From: a\nContent-Type: text/plain; charset=iso-8859-1\n",
+                                       body: body)
+        XCTAssertTrue(part.contains(0xFC), "Signed bytes must be the body's own bytes")
+        XCTAssertTrue(part.count > body.count, "Headers should precede the body")
+    }
+
+    func testBuildInnerMIMEEntity_preservesNonUTF8Body() {
+        var body = Data("f".utf8)
+        body.append(0xFC)
+        let entity = svc.buildInnerMIMEEntity(rawHeaders: "Content-Type: text/plain; charset=iso-8859-1\n",
+                                              body: body)
+        XCTAssertTrue(entity.contains(0xFC), "Encrypting must not drop a non-UTF-8 body")
+    }
+
+    func testSplitMessage_keepsHeadersWhenBodyIsNotUTF8() {
+        var raw = Data("From: a@b\nSubject: hi\n\n".utf8)
+        raw.append(0xFC)
+        let (headers, body) = svc.splitMessage(raw)
+        XCTAssertTrue(headers.contains("From: a@b"), "Headers must survive a non-UTF-8 body")
+        XCTAssertEqual(Array(body), [0xFC])
     }
 
     // MARK: - reconstructDecryptedMessage

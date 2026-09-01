@@ -274,12 +274,7 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
             // LF→CRLF. Thunderbird verifies the CRLF bytes it receives, so we
             // must sign the CRLF version. The email is still built with LF (for
             // Mail.app compatibility) — SMTP transport restores the CRLF.
-            let crlfSignedPart = signedPart
-                .replacingOccurrences(of: "\r\n", with: "\n")
-                .replacingOccurrences(of: "\n", with: "\r\n")
-            guard let signedPartData = crlfSignedPart.data(using: .utf8) else {
-                throw GPGXPCError.make(.encodingFailed, message: "Could not encode signed part")
-            }
+            let signedPartData = normalizeLineEndings(in: signedPart, to: "\r\n")
             log.info("sign: signed part size=\(signedPartData.count) bytes (CRLF canonical), invoking gpg --detach-sign…")
             let (sigData, stderr, code) = try gpg(
                 ["--detach-sign", "--armor", "--batch", "--yes",
