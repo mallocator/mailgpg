@@ -335,6 +335,24 @@ extension GPGServiceImpl {
         return result
     }
 
+    /// Rewrite a Content-Type's charset parameter to utf-8, adding it when the
+    /// header did not carry one.
+    func withCharsetUTF8(_ contentType: String) -> String {
+        guard let range = contentType.range(of: "charset=", options: .caseInsensitive) else {
+            return contentType + "; charset=utf-8"
+        }
+        let rest = contentType[range.upperBound...]
+        let valueEnd: String.Index
+        if rest.first == "\"" {
+            let afterQuote = rest.index(after: rest.startIndex)
+            valueEnd = rest[afterQuote...].firstIndex(of: "\"").map { rest.index(after: $0) }
+                    ?? rest.endIndex
+        } else {
+            valueEnd = rest.firstIndex(where: { ";,\r\n \t".contains($0) }) ?? rest.endIndex
+        }
+        return String(contentType[..<range.lowerBound]) + "charset=utf-8" + String(rest[valueEnd...])
+    }
+
     /// Extract a header value from a block of RFC 2822 headers, collecting
     /// folded (multi-line) continuation lines.
     func foldedHeaderValue(_ name: String, in headers: String) -> String? {
@@ -366,9 +384,14 @@ extension GPGServiceImpl {
     /// Extract a named parameter value from a MIME header value string.
     /// e.g. headerParameter("boundary", in: "multipart/alternative; boundary=\"ABC\"") → "ABC"
     private func headerParameter(_ name: String, in headerValue: String) -> String? {
-        let lower = headerValue.lowercased()
-        let needle = name.lowercased() + "="
-        guard let range = lower.range(of: needle) else { return nil }
+        // Search case-insensitively in the original string rather than
+        // computing a range on a lowercased copy and indexing the original with
+        // it. Lowercasing is not guaranteed to preserve length in Unicode, so
+        // those indices are only accidentally valid — and when they are not,
+        // the result is a silently wrong boundary or charset.
+        guard let range = headerValue.range(of: name + "=", options: .caseInsensitive) else {
+            return nil
+        }
         let start = headerValue[range.upperBound...]
         if start.hasPrefix("\"") {
             let afterQuote = start.index(after: start.startIndex)
@@ -547,7 +570,12 @@ extension GPGServiceImpl {
             var headers = removeHeader("content-type", from: envHeaders)
             headers = removeHeader("content-transfer-encoding", from: headers)
             headers = removeHeader("x-mailgpg-sessionid", from: headers)
-            headers = setHeader("Content-Type", to: partCT, in: headers)
+            // This branch rebuilds the body as a Swift String and emits UTF-8,
+            // so the Content-Type has to say UTF-8. Carrying the original
+            // charset forward labelled our UTF-8 bytes as something else, which
+            // renders as mojibake the moment the message contains a non-ASCII
+            // character.
+            headers = setHeader("Content-Type", to: withCharsetUTF8(partCT), in: headers)
             headers = setHeader("Content-Transfer-Encoding", to: "8bit", in: headers)
             if foldedHeaderValue("mime-version", in: headers) == nil {
                 headers += eol + "MIME-Version: 1.0"

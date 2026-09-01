@@ -322,6 +322,27 @@ final class MIMEHelpersTests: XCTestCase {
         XCTAssertEqual(svc.extractPGPPayload(from: data), data)
     }
 
+    // MARK: - charset rewriting
+
+    func testWithCharsetUTF8_replacesExisting() {
+        XCTAssertEqual(svc.withCharsetUTF8("text/plain; charset=iso-8859-1"),
+                       "text/plain; charset=utf-8")
+    }
+
+    func testWithCharsetUTF8_replacesQuoted() {
+        XCTAssertEqual(svc.withCharsetUTF8("text/plain; charset=\"iso-8859-1\"; format=flowed"),
+                       "text/plain; charset=utf-8; format=flowed")
+    }
+
+    func testWithCharsetUTF8_addsWhenAbsent() {
+        XCTAssertEqual(svc.withCharsetUTF8("text/plain"), "text/plain; charset=utf-8")
+    }
+
+    func testWithCharsetUTF8_isCaseInsensitive() {
+        XCTAssertEqual(svc.withCharsetUTF8("text/plain; CharSet=Windows-1252"),
+                       "text/plain; charset=utf-8")
+    }
+
     // MARK: - non-UTF-8 decrypted bodies
 
     func testReconstruct_latin1BodySurvives() {
