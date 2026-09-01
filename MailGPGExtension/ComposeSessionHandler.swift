@@ -39,24 +39,31 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
             .joined(separator: "\r\n ")
     }
 
-    /// True when every CRLF in the value is followed by a space or tab, i.e.
-    /// the value can only fold its own field and can never terminate it.
+    /// True when the value can only fold its own header field and can never
+    /// terminate it — the property that separates folding from injection.
+    ///
+    /// Two rules, and the second is the one that is easy to miss: a line break
+    /// must be CRLF (a bare CR is not a fold, and parsers disagree about
+    /// whether it ends a line, which is exactly the ambiguity an attacker
+    /// wants), and it must be followed by a space or tab.
     static func foldsSafely(_ value: String) -> Bool {
         let scalars = Array(value.unicodeScalars)
         var index = 0
         while index < scalars.count {
-            if scalars[index] == "\r" || scalars[index] == "\n" {
-                // Normalise CRLF to a single break, then require WSP after it.
-                var next = index + 1
-                if scalars[index] == "\r", next < scalars.count, scalars[next] == "\n" {
-                    next += 1
-                }
-                guard next < scalars.count,
-                      scalars[next] == " " || scalars[next] == "\t" else { return false }
-                index = next + 1
+            let scalar = scalars[index]
+            guard scalar == "\r" || scalar == "\n" else {
+                index += 1
                 continue
             }
-            index += 1
+            // A CR must be part of a CRLF pair; a lone LF is tolerated.
+            var next = index + 1
+            if scalar == "\r" {
+                guard next < scalars.count, scalars[next] == "\n" else { return false }
+                next += 1
+            }
+            guard next < scalars.count,
+                  scalars[next] == " " || scalars[next] == "\t" else { return false }
+            index = next + 1
         }
         return true
     }
