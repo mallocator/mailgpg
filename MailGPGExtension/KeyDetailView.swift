@@ -81,8 +81,12 @@ struct KeyDetailView: View {
                     .disabled(isLsigning)
                 }
                 Text(isVerified
-                     ? "This key is locally certified. Your mail client will show it as verified."
-                     : "Only verify after confirming out-of-band that the fingerprint above belongs to this person.")
+                     ? "This key is locally certified. Mail shows it as verified, PGP is offered "
+                     + "for this address, and a future change of key for it will be accepted."
+                     : "Only verify after confirming out-of-band — in person, by phone, not by "
+                     + "email — that the fingerprint above belongs to this person. Verifying also "
+                     + "offers PGP for this address and accepts this key in place of any "
+                     + "previously pinned one.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

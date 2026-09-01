@@ -351,12 +351,21 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 // Falling back to "whatever key is first in the keyring" signs
                 // outgoing mail with an unrelated identity, silently.
                 //
-                // Several keys can carry the same address — an old one you have
-                // stopped using alongside your current one. GPG lists them in no
-                // order you should rely on, so pick the most recently created.
-                let signerKey = usable
-                    .filter { $0.email.lowercased() == senderEmail }
-                    .max { ($0.createdAt ?? .distantPast) < ($1.createdAt ?? .distantPast) }
+                // Among the keys that do carry the address, prefer the one the
+                // user chose in Key Management. That setting was stored and
+                // displayed but never consulted when signing — a checkmark in
+                // the UI that changed nothing. It is deliberately only a
+                // tie-break within the matching keys: honouring it for an
+                // address it does not cover would be the identity bug again,
+                // wearing a preference as a disguise.
+                //
+                // Otherwise take the most recently created match. Several keys
+                // can carry one address — an old one you stopped using beside
+                // your current one — and GPG lists them in no dependable order.
+                let matching = usable.filter { $0.email.lowercased() == senderEmail }
+                let preferredFingerprint = await GPGService.shared.getDefaultSigningKey()
+                let signerKey = matching.first { $0.fingerprint == preferredFingerprint }
+                    ?? matching.max { ($0.createdAt ?? .distantPast) < ($1.createdAt ?? .distantPast) }
                 if signerKey == nil {
                     log.error("encode: no secret key matches the From address")
                 }
