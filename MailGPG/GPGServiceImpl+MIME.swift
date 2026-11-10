@@ -49,6 +49,9 @@ extension GPGServiceImpl {
     /// Decode a quoted-printable encoded string (RFC 2045) into Unicode text.
     func decodeQuotedPrintable(_ s: String) -> String {
         let data = decodeQuotedPrintableData(s)
+        // Display fallback after the strict decode failed: show the text with
+        // replacement characters rather than nothing.
+        // swiftlint:disable:next optional_data_string_conversion
         return String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
     }
 
@@ -61,8 +64,8 @@ extension GPGServiceImpl {
         // message), we'd split at a CRLF blank line *inside the body* instead of
         // the real "\n\n" header/body separator — corrupting the header/body split
         // and causing lineEnding() to detect CRLF, which makes Mail.app crash.
-        let crlfSep = "\r\n\r\n".data(using: .utf8)!
-        let lfSep   = "\n\n".data(using: .utf8)!
+        let crlfSep = Data("\r\n\r\n".utf8)
+        let lfSep   = Data("\n\n".utf8)
         let crlfRange = data.range(of: crlfSep)
         let lfRange   = data.range(of: lfSep)
 
@@ -84,9 +87,11 @@ extension GPGServiceImpl {
         // depends on. Headers are ASCII by specification, so substituting
         // replacement characters for stray bytes costs nothing.
         if let r = splitRange {
+            // swiftlint:disable:next optional_data_string_conversion
             return (String(decoding: data[..<r.lowerBound], as: UTF8.self),
                     Data(data[r.upperBound...]))
         }
+        // swiftlint:disable:next optional_data_string_conversion
         return (String(decoding: data, as: UTF8.self), Data())
     }
 
@@ -367,9 +372,9 @@ extension GPGServiceImpl {
         let prefix = name.lowercased() + ":"
         var result: String? = nil
         for (i, line) in lines.enumerated() {
-            if result != nil {
+            if let current = result {
                 if line.hasPrefix(" ") || line.hasPrefix("\t") {
-                    result! += " " + line.trimmingCharacters(in: .whitespaces)
+                    result = current + " " + line.trimmingCharacters(in: .whitespaces)
                 } else {
                     break
                 }
@@ -509,6 +514,7 @@ extension GPGServiceImpl {
         // then failed to decrypt something perfectly valid. The PGP armour is
         // ASCII, so substituting replacement characters elsewhere cannot move
         // the block boundaries.
+        // swiftlint:disable:next optional_data_string_conversion
         let str = String(decoding: data, as: UTF8.self)
 
         // ── multipart/encrypted (RFC 3156) ───────────────────────────────────
@@ -564,6 +570,7 @@ extension GPGServiceImpl {
         // Lenient, never nil. `String(data:encoding:.utf8)` returns nil for a
         // body in any non-UTF-8 charset — iso-8859-1 is still common — and the
         // `?? ""` that followed turned that into a message with no body at all.
+        // swiftlint:disable:next optional_data_string_conversion
         let plaintextStr = String(decoding: plaintext, as: UTF8.self)
 
         // ── inline PGP: replace just the encrypted block, keep surrounding text ──
@@ -608,6 +615,8 @@ extension GPGServiceImpl {
         let separator = plaintext.range(of: Data("\r\n\r\n".utf8))
                      ?? plaintext.range(of: Data("\n\n".utf8))
         if let separator {
+            // Headers are ASCII by specification: a stray byte must not hide them.
+            // swiftlint:disable:next optional_data_string_conversion
             let innerHeaders = String(decoding: plaintext[..<separator.lowerBound], as: UTF8.self)
             if innerHeaders.lowercased().contains("content-type:") {
                 if let ct = foldedHeaderValue("content-type", in: innerHeaders) {

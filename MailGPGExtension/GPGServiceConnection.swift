@@ -85,9 +85,13 @@ final class GPGServiceConnection {
             self?.handleInvalidation()
         }
 
-        // Force-cast is safe here: we configured the interface with GPGXPCProtocol,
-        // so XPC guarantees the proxy conforms to it.
-        return proxy as! GPGXPCProtocol
+        // We configured the interface with GPGXPCProtocol, so XPC hands back a
+        // proxy that conforms to it; anything else is an unusable connection.
+        guard let typed = proxy as? GPGXPCProtocol else {
+            throw GPGXPCError.make(.hostAppNotRunning,
+                message: "XPC proxy does not conform to GPGXPCProtocol.")
+        }
+        return typed
     }
 
     // MARK: - Connection management
@@ -96,12 +100,13 @@ final class GPGServiceConnection {
         let conn = NSXPCConnection(machServiceName: serviceName)
 
         // Tell XPC what protocol the host app (remote side) implements.
-        conn.remoteObjectInterface = NSXPCInterface(with: GPGXPCProtocol.self)
+        let interface = NSXPCInterface(with: GPGXPCProtocol.self)
 
         // XPC needs to know about [String] parameters explicitly — without this,
         // any method that sends an array of strings across the boundary will be
         // rejected at runtime. We register each affected method here.
-        configureArrayTypes(on: conn.remoteObjectInterface!)
+        configureArrayTypes(on: interface)
+        conn.remoteObjectInterface = interface
 
         // Interruption = host app crashed but will restart. XPC buffers outgoing
         // calls and replays them once the host app reconnects. We just log it.
@@ -196,9 +201,9 @@ final class GPGServiceConnection {
 
     /// Builds a `Set<AnyHashable>` from Obj-C class objects.
     /// The bridge `as AnyObject` converts the Swift metatype to an Obj-C class
-    /// object; the force-cast to `AnyHashable` succeeds because Obj-C class
-    /// objects are NSObject instances, which are Hashable.
-    private func classSet(_ classes: AnyClass...) -> Set<AnyHashable> {
-        Set(classes.map { $0 as AnyObject as! AnyHashable })
+    /// object. Taking `NSObject.Type` means every class object is an NSObject
+    /// instance, which is Hashable, so the conditional cast never drops one.
+    private func classSet(_ classes: NSObject.Type...) -> Set<AnyHashable> {
+        Set(classes.compactMap { $0 as AnyObject as? AnyHashable })
     }
 }

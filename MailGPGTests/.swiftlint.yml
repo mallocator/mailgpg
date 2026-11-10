@@ -1,0 +1,6 @@
+# Source: standards configs/swift/swiftlint-tests.yml. Copy it unchanged as .swiftlint.yml into each test folder.
+# Tests: force unwraps, casts and try off (a crash fails the test anyway); bug rules stay on.
+disabled_rules:
+  - force_cast
+  - force_try
+  - force_unwrapping

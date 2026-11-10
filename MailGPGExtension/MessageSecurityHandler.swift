@@ -502,6 +502,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         let headerData = eoh.map { Data(data[..<$0.lowerBound]) } ?? data.prefix(4096)
         // Lenient: one stray byte in the header block must not blind us to
         // every header in the message.
+        // swiftlint:disable:next optional_data_string_conversion
         let headerStr = String(decoding: headerData, as: UTF8.self)
         let target = name.lowercased() + ":"
         for line in headerStr.components(separatedBy: "\n") {
@@ -545,8 +546,9 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 }
                 data = Data(bytes)
             }
-            if let data, let decoded = String(data: data, encoding: strEnc) {
-                result.replaceSubrange(result.range(of: String(value[fullRange]))!, with: decoded)
+            if let data, let decoded = String(data: data, encoding: strEnc),
+               let wordRange = result.range(of: String(value[fullRange])) {
+                result.replaceSubrange(wordRange, with: decoded)
             }
         }
         return result
@@ -582,6 +584,9 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         // headers added by Gmail, Exchange, etc. (DKIM, ARC, Received, ...) can
         // push Content-Type well past 4 KB.
         let headerData = Data(Self.headerBlock(in: data))
+        // Lenient: headers are ASCII by specification, and a stray byte must
+        // not hide the Content-Type.
+        // swiftlint:disable:next optional_data_string_conversion
         let preview = String(decoding: headerData, as: UTF8.self).lowercased()
         // For inline PGP (e.g. Mailvelope), the PGP block is in the body, not the headers.
         // Check for ASCII armor markers as bytes so normal large messages do not
@@ -857,6 +862,8 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     /// no verdict.
     private nonisolated static func extractSignedParts(from data: Data) -> (signedData: Data?, signature: Data?) {
         // Only the header block is decoded as text, to find the boundary.
+        // Lenient: headers are ASCII by specification.
+        // swiftlint:disable:next optional_data_string_conversion
         let headerBlock = String(decoding: Self.headerBlock(in: data), as: UTF8.self)
 
         var boundary: String? = nil
@@ -892,6 +899,9 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
             log.error("extractSignedParts: could not extract signature body")
             return (nil, nil)
         }
+        // The armoured signature is ASCII; a stray byte makes gpg report the
+        // signature as bad rather than skipping verification.
+        // swiftlint:disable:next optional_data_string_conversion
         let sigBody = String(decoding: sigPart[sepRange.upperBound...], as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sigBody.isEmpty else {

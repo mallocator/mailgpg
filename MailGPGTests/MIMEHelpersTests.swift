@@ -421,13 +421,13 @@ final class MIMEHelpersTests: XCTestCase {
         let plaintext = Data("Content-Type: text/plain; charset=utf-8\n\nhellö".utf8)
         let result = svc.reconstructDecryptedMessage(original: outer, plaintext: plaintext)
         let (_, body) = svc.splitMessage(result)
-        XCTAssertEqual(String(decoding: body, as: UTF8.self), "hellö")
+        XCTAssertEqual(String(data: body, encoding: .utf8), "hellö")
     }
 
     func testNormalizeLineEndings_bytesToCRLF() {
         let input = Data("a\nb\r\nc\rd".utf8)
         let out = svc.normalizeLineEndings(in: input, to: "\r\n")
-        XCTAssertEqual(String(decoding: out, as: UTF8.self), "a\r\nb\r\nc\r\nd")
+        XCTAssertEqual(String(data: out, encoding: .utf8), "a\r\nb\r\nc\r\nd")
     }
 
     func testNormalizeLineEndings_preservesNonUTF8Bytes() {
@@ -494,29 +494,29 @@ final class MIMEHelpersTests: XCTestCase {
     // MARK: - buildSignedPart
 
     /// buildSignedPart returns bytes now — this is what the signature covers.
-    private func signedPartText(_ headers: String, _ body: String) -> String {
-        String(decoding: svc.buildSignedPart(rawHeaders: headers,
-                                             body: Data(body.utf8)), as: UTF8.self)
+    private func signedPartText(_ headers: String, _ body: String) throws -> String {
+        try XCTUnwrap(String(data: svc.buildSignedPart(rawHeaders: headers, body: Data(body.utf8)),
+                             encoding: .utf8))
     }
 
-    func testBuildSignedPart_inheritsLFLineEnding() {
-        let result = signedPartText("From: a\nContent-Type: text/plain\n", "Hi")
+    func testBuildSignedPart_inheritsLFLineEnding() throws {
+        let result = try signedPartText("From: a\nContent-Type: text/plain\n", "Hi")
         XCTAssertFalse(result.contains("\r\n"), "LF message must produce LF signed part; result=\(result.debugDescription)")
     }
 
-    func testBuildSignedPart_inheritsCRLFLineEnding() {
-        let result = signedPartText("From: a\r\nContent-Type: text/plain\r\n", "Hi")
+    func testBuildSignedPart_inheritsCRLFLineEnding() throws {
+        let result = try signedPartText("From: a\r\nContent-Type: text/plain\r\n", "Hi")
         XCTAssert(result.contains("\r\n"))
     }
 
-    func testBuildSignedPart_startsWithContentType() {
+    func testBuildSignedPart_startsWithContentType() throws {
         // RFC 3156 §5: signed content starts with Content-Type header, not envelope headers
-        let result = signedPartText("From: a\nContent-Type: text/plain; charset=utf-8\n", "Body")
+        let result = try signedPartText("From: a\nContent-Type: text/plain; charset=utf-8\n", "Body")
         XCTAssert(result.hasPrefix("Content-Type:"), "result=\(result.debugDescription)")
     }
 
-    func testBuildSignedPart_hasBlankLineBeforeBody() {
-        let result = signedPartText("From: a\nContent-Type: text/plain\n", "TheBody")
+    func testBuildSignedPart_hasBlankLineBeforeBody() throws {
+        let result = try signedPartText("From: a\nContent-Type: text/plain\n", "TheBody")
         XCTAssert(result.contains("\n\nTheBody"), "result=\(result.debugDescription)")
     }
 

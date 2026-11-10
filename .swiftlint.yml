@@ -1,0 +1,40 @@
+# Source: standards configs/swift/swiftlint.yml. Copy it unchanged as .swiftlint.yml (this line lets scripts/repos.ts report drift).
+# Correctness only: bugs, crashes and stale disable comments. Formatting, naming and size limits are left out.
+only_rules:
+  # Crashes at run time
+  - force_cast
+  - force_try
+  - force_unwrapping
+  # Logic mistakes
+  - duplicate_conditions
+  - duplicate_enum_cases
+  - duplicated_key_in_dictionary_literal
+  - identical_operands
+  - no_fallthrough_only
+  - self_in_property_initialization
+  - unused_setter_value
+  - invisible_character
+  - optional_data_string_conversion
+  - nsobject_prefer_isequal
+  - ns_number_init_as_function_reference
+  - compiler_protocol_init
+  # Concurrency and lifetimes
+  - unhandled_throwing_task
+  - async_without_await
+  - incompatible_concurrency_annotation
+  - discarded_notification_center_observer
+  - notification_center_detachment
+  - class_delegate_protocol
+  - weak_delegate
+  - unowned_variable_capture
+  - overridden_super_call
+  - prohibited_super_call
+  # Tests that never run or never fail
+  - private_unit_test
+  - empty_xctest_method
+  # Disable comments stay honest
+  - superfluous_disable_command
+  - blanket_disable_command
+  - invalid_swiftlint_command
+reporter: relative-path
+strict: true

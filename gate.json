@@ -1,0 +1,3 @@
+{
+  "preCommit": [{ "run": "swiftlint lint --quiet", "paths": ["*.swift", ".swiftlint.yml"] }]
+}
