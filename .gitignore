@@ -65,11 +65,7 @@ fastlane/test_output
 
 xcdebugger/
 
-# Keep AI local
-CLAUDE.md
-GEMINI.md
-CODEX.md
-Agents.md
+# Local agent state (instructions are tracked: AGENTS.md, CLAUDE.md)
 .claude
 .codex
 .gemini
