@@ -4,7 +4,7 @@ Branch `pyxzl`. Rebranded to `net.pyxzl` / team `3HKD37M482`, plus four fixes on
 top of upstream `b8afeba`. Nothing here has been compiled — I have no Xcode in
 this environment — so step 5 is where you find out whether my patches build.
 
-Run everything from `~/Development/apple-mail-pgp/mailgpg`.
+Run everything from the repository root.
 
 ---
 
