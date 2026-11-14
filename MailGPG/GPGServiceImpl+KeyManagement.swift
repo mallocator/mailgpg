@@ -11,7 +11,7 @@ extension GPGServiceImpl {
     func lookupKey(email: String,
                    reply: @escaping (Data?, Error?) -> Void) {
         do {
-            if let key = try resolveKey(email: email) {
+            if let key = try resolveKey(email: email, forEncryption: true) {
                 reply(try xpcEncode(key), nil)
             } else {
                 reply(nil, nil)
@@ -30,8 +30,9 @@ extension GPGServiceImpl {
     ///   4. Each keyserver by key ID (`--recv-keys`) — only when `keyID` is given
     ///
     /// Returns the best usable key found, or `nil` if none was found.
-    /// Keys are auto-imported by GPG on steps 2–4.
-    func resolveKey(email: String? = nil, keyID: String? = nil) throws -> KeyInfo? {
+    /// Keys are auto-imported by GPG on steps 2–4. `forEncryption` skips keys
+    /// without a usable encryption subkey in the lookups by address.
+    func resolveKey(email: String? = nil, keyID: String? = nil, forEncryption: Bool = false) throws -> KeyInfo? {
         let keyservers = currentKeyservers()
 
         // gpg reads options after operands too, so an address from a mail
@@ -42,7 +43,8 @@ extension GPGServiceImpl {
             let (localOut, _, localCode) = try gpg(
                 ["--list-keys", "--with-colons", "--fixed-list-mode", "--", email])
             if localCode == 0, let key = usableKey(for: email, in:
-                parseColonOutput(String(data: localOut, encoding: .utf8) ?? "", wantSecretKeys: false)) {
+                parseColonOutput(String(data: localOut, encoding: .utf8) ?? "", wantSecretKeys: false),
+                forEncryption: forEncryption) {
                 return key
             }
 
@@ -61,7 +63,8 @@ extension GPGServiceImpl {
                 "--", email
             ])
             if wkdCode == 0, var key = usableKey(for: email, in:
-                parseColonOutput(String(data: wkdOut, encoding: .utf8) ?? "", wantSecretKeys: false)) {
+                parseColonOutput(String(data: wkdOut, encoding: .utf8) ?? "", wantSecretKeys: false),
+                forEncryption: forEncryption) {
                 key.viaWKD = true
                 log.info("resolveKey: found via WKD")
                 return key
@@ -81,7 +84,8 @@ extension GPGServiceImpl {
                     "--", email
                 ])
                 guard code == 0, let key = usableKey(for: email, in:
-                    parseColonOutput(String(data: out, encoding: .utf8) ?? "", wantSecretKeys: false))
+                    parseColonOutput(String(data: out, encoding: .utf8) ?? "", wantSecretKeys: false),
+                    forEncryption: forEncryption)
                 else { continue }
                 return key
             }
@@ -112,10 +116,13 @@ extension GPGServiceImpl {
     /// gpg matches a bare address as a substring of the user ID, so the
     /// listing for bob@example.com also holds `Mallory <notbob@example.com>`.
     /// Only a key carrying the address itself as a live user ID qualifies —
-    /// primary or not — and an unexpired one wins over an expired one.
-    func usableKey(for email: String, in keys: [KeyInfo]) -> KeyInfo? {
+    /// primary or not — and an unexpired one wins over an expired one. For
+    /// encryption, only a key that can still encrypt qualifies.
+    func usableKey(for email: String, in keys: [KeyInfo], forEncryption: Bool = false) -> KeyInfo? {
         let wanted = email.lowercased()
-        let carrying = keys.filter { !$0.isRevoked && $0.emails.contains(wanted) }
+        let carrying = keys.filter {
+            !$0.isRevoked && $0.emails.contains(wanted) && (!forEncryption || $0.canEncrypt)
+        }
         return carrying.first { $0.expiresAt.map { $0 > Date() } ?? true } ?? carrying.first
     }
 

@@ -101,9 +101,16 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
             // consumes some data. GPG in turn may block writing to stdout/stderr
             // once *their* pipe buffers fill. Reading stdout/stderr below on this
             // thread breaks the cycle.
+            //
+            // GPG can exit without reading its input, e.g. when a recipient
+            // key is unusable. Writing on into the closed pipe raised SIGPIPE,
+            // which killed this process; with it off the write fails with
+            // EPIPE instead, and GPG's exit status says what went wrong.
+            let writer = inPipe.fileHandleForWriting
+            _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
             DispatchQueue.global(qos: .userInitiated).async {
-                inPipe.fileHandleForWriting.write(input)
-                inPipe.fileHandleForWriting.closeFile()   // signal EOF to GPG
+                try? writer.write(contentsOf: input)
+                try? writer.close()   // signal EOF to GPG
             }
         } else {
             try process.run()

@@ -264,4 +264,14 @@ final class GPGKeyManagementTests: XCTestCase {
         XCTAssertNil(key)
         XCTAssertFalse(FileManager.default.fileExists(atPath: logPath), "gpg took the address as an option")
     }
+
+    func testUsableKey_forEncryptionSkipsSignOnlyKey() throws {
+        // A key whose encryption subkey is gone or expired lists fine but
+        // makes gpg refuse to encrypt.
+        try addKey(uid: "Signer <signer@example.com>")
+        let listing = try localListing("signer@example.com")
+        XCTAssertNotNil(svc.usableKey(for: "signer@example.com", in: listing))
+        XCTAssertNil(svc.usableKey(for: "signer@example.com", in: listing, forEncryption: true))
+        XCTAssertNotNil(svc.usableKey(for: homedir.email, in: try localListing(homedir.email), forEncryption: true))
+    }
 }

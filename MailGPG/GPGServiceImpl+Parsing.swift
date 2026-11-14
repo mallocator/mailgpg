@@ -30,6 +30,7 @@ extension GPGServiceImpl {
         var ownertrust  = ""   // field[8]: explicitly-set owner trust
         var expiry      = ""
         var created     = ""
+        var capabilities = ""  // field[11]: capitals are what the whole key can still do
         var uids: [(name: String, email: String, revoked: Bool)] = []
 
         func flush() {
@@ -58,7 +59,8 @@ extension GPGServiceImpl {
                 // Revoked user IDs are excluded: the owner retired that address,
                 // and encrypting to it or accepting a signature from it should
                 // not keep working because the key as a whole is still valid.
-                emails:      live.map { $0.email.lowercased() }.filter { !$0.isEmpty }
+                emails:      live.map { $0.email.lowercased() }.filter { !$0.isEmpty },
+                canEncrypt:  capabilities.contains("E")
             ))
         }
 
@@ -78,6 +80,7 @@ extension GPGServiceImpl {
                 ownertrust  = f.count > 8 ? f[8] : ""
                 expiry      = f.count > 6 ? f[6] : ""
                 created     = f.count > 5 ? f[5] : ""   // colon field 6: creation date
+                capabilities = f.count > 11 ? f[11] : ""
                 fingerprint = ""
                 uids        = []
 

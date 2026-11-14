@@ -442,4 +442,25 @@ final class GPGCryptoTests: XCTestCase {
         XCTAssertEqual(signers[0].email, homedir.email)
         XCTAssertFalse(signers[0].fingerprint.isEmpty)
     }
+
+    // MARK: - gpg exiting before it reads its input
+
+    func testEncrypt_largeBodyToUnknownKeyFailsWithoutKillingTheProcess() {
+        // gpg stops before reading stdin when it can't use a recipient key.
+        // A body larger than the pipe buffer then hits a closed pipe, which
+        // used to raise SIGPIPE and take the helper (here: the test host) down.
+        var message = Data("From: a@example.com\nContent-Type: text/plain\n\n".utf8)
+        message.append(Data(repeating: 0x61, count: 1_000_000))
+        var result: (Data?, Error?)
+        let sem = DispatchSemaphore(value: 0)
+        svc.encrypt(data: message,
+                    recipientFingerprints: [String(repeating: "AB", count: 20)],
+                    hiddenRecipientFingerprints: []) { data, error in
+            result = (data, error)
+            sem.signal()
+        }
+        sem.wait()
+        XCTAssertNil(result.0)
+        XCTAssertEqual((result.1 as NSError?)?.code, GPGXPCError.gpgFailed.rawValue)
+    }
 }

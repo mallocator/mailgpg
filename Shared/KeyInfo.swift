@@ -61,6 +61,11 @@ struct KeyInfo: Codable, Identifiable, Equatable {
     /// something a stranger uploaded once and nobody ever removed.
     var viaWKD: Bool = false
 
+    /// Whether the key has a usable encryption subkey (`E` in the key's
+    /// capabilities). A key whose encryption subkey expired or was revoked
+    /// still lists, but gpg refuses to encrypt to it.
+    var canEncrypt: Bool = true
+
     // `Identifiable` — SwiftUI needs a stable `id` property.
     var id: String { fingerprint }
 }
