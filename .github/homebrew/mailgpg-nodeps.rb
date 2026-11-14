@@ -8,64 +8,27 @@ cask "mailgpg-nodeps" do
 
   url "https://github.com/mallocator/mailgpg/releases/download/v#{version}/MailGPG-#{version}.dmg"
   name "MailGPG"
-  desc "Native macOS Mail extension for GPG email encryption and signing without Homebrew GPG dependencies"
+  desc "Mail extension for GPG email encryption and signing, without GnuPG dependencies"
   homepage "https://github.com/mallocator/mailgpg"
 
-  # Minimum macOS version
   depends_on macos: :sonoma
 
   app "MailGPG.app"
 
-  postflight do
-    plist_dir = "#{Dir.home}/Library/LaunchAgents"
-    plist_path = "#{plist_dir}/net.pyxzl.mailgpg.plist"
-
-    FileUtils.mkdir_p(plist_dir)
-
-    executable = "#{appdir}/MailGPG.app/Contents/MacOS/MailGPG"
-    plist_content = <<~XML
-      <?xml version="1.0" encoding="UTF-8"?>
-      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-      <plist version="1.0">
-      <dict>
-        <key>Label</key>
-        <string>net.pyxzl.mailgpg</string>
-        <key>AssociatedBundleIdentifiers</key>
-        <string>net.pyxzl.MailGPG</string>
-        <key>ProgramArguments</key>
-        <array>
-          <string>#{executable}</string>
-        </array>
-        <key>KeepAlive</key>
-        <true/>
-        <key>MachServices</key>
-        <dict>
-          <key>net.pyxzl.mailgpg.gpgservice</key>
-          <true/>
-        </dict>
-      </dict>
-      </plist>
-    XML
-
-    File.write(plist_path, plist_content)
-    system_command "/bin/launchctl",
-      args: ["bootstrap", "gui/#{Process.uid}", plist_path],
-      print_stderr: false
-  end
-
-  uninstall_postflight do
-    plist_path = "#{Dir.home}/Library/LaunchAgents/net.pyxzl.mailgpg.plist"
-    if File.exist?(plist_path)
-      system_command "/bin/launchctl",
-        args: ["bootout", "gui/#{Process.uid}", plist_path],
-        print_stderr: false
-      FileUtils.rm_f(plist_path)
-    end
+  # MailGPG.app registers its helper with launchd itself when it is opened.
+  # This stops it and removes the plist older versions of this cask wrote.
+  uninstall_preflight_steps do
+    run "/bin/launchctl", args: ["remove", "net.pyxzl.mailgpg"], must_succeed: false, print_stderr: false
+    remove "Library/LaunchAgents/net.pyxzl.mailgpg.plist", base: :home
   end
 
   caveats <<~EOS
     This cask does not install `gnupg` or `pinentry-mac`.
     Make sure a supported `gpg` binary and GUI pinentry are already installed.
+
+    Open MailGPG.app once after every install or upgrade: it starts the
+    helper and registers it as a login item.
+      open /Applications/MailGPG.app
 
     To finish setup, enable the Mail extension:
       Mail → Settings → Extensions → MailGPG ✓

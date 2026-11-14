@@ -28,6 +28,7 @@
 		3A4E0000000000000000C003 /* XPCReply.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A4E0000000000000000C001 /* XPCReply.swift */; };
 		B865AAE3664A45DB8D022CEA /* TrustLevel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E740A487D0E04695BEC7B959 /* TrustLevel.swift */; };
 		C44923A61DF642298128C68C /* TrustLevel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E740A487D0E04695BEC7B959 /* TrustLevel.swift */; };
+		4A0000000000000000000002 /* net.pyxzl.mailgpg.plist in Copy Launch Agent */ = {isa = PBXBuildFile; fileRef = 4A0000000000000000000001 /* net.pyxzl.mailgpg.plist */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -59,6 +60,17 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		4A0000000000000000000003 /* Copy Launch Agent */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
+			files = (
+				4A0000000000000000000002 /* net.pyxzl.mailgpg.plist in Copy Launch Agent */,
+			);
+			name = "Copy Launch Agent";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -81,6 +93,7 @@
 		3A4E0000000000000000B001 /* DecodeCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecodeCache.swift; sourceTree = "<group>"; };
 		3A4E0000000000000000C001 /* XPCReply.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XPCReply.swift; sourceTree = "<group>"; };
 		E740A487D0E04695BEC7B959 /* TrustLevel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustLevel.swift; sourceTree = "<group>"; };
+		4A0000000000000000000001 /* net.pyxzl.mailgpg.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = net.pyxzl.mailgpg.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -161,6 +174,7 @@
 			children = (
 				1F3247A62F69F97400156831 /* Shared */,
 				1F5965B12F699227000486DC /* MailGPG */,
+				4A0000000000000000000004 /* LaunchAgent */,
 				1F5965C22F69928A000486DC /* MailGPGExtension */,
 				AABB0003AABB0003AABB0003 /* MailGPGTests */,
 				AABB00CC00CCAABB00CC00CC /* MailGPG.xctestplan */,
@@ -207,6 +221,14 @@
 			path = .github;
 			sourceTree = "<group>";
 		};
+		4A0000000000000000000004 /* LaunchAgent */ = {
+			isa = PBXGroup;
+			children = (
+				4A0000000000000000000001 /* net.pyxzl.mailgpg.plist */,
+			);
+			path = LaunchAgent;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -218,6 +240,7 @@
 				1F5965AC2F699227000486DC /* Frameworks */,
 				1F5965AD2F699227000486DC /* Resources */,
 				1F5965DF2F69928A000486DC /* Embed Foundation Extensions */,
+				4A0000000000000000000003 /* Copy Launch Agent */,
 			);
 			buildRules = (
 			);

@@ -170,7 +170,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
             return MEOutgoingMessageEncodingStatus(
                 canSign: false, canEncrypt: false,
                 securityError: GPGXPCError.make(.hostAppNotRunning,
-                    message: "MailGPG host app is not running. Please open it to enable GPG operations."),
+                    message: GPGXPCError.hostAppNotRunningMessage),
                 addressesFailingEncryption: [])
         }
         // Don't populate addressesFailingEncryption — that causes Mail to

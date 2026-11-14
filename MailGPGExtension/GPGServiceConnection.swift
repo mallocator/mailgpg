@@ -78,7 +78,7 @@ final class GPGServiceConnection {
 
         guard let conn = current else {
             throw GPGXPCError.make(.hostAppNotRunning,
-                message: "MailGPG host app is not running. Please open it to enable GPG operations.")
+                message: GPGXPCError.hostAppNotRunningMessage)
         }
 
         // `remoteObjectProxyWithErrorHandler` returns a proxy object.

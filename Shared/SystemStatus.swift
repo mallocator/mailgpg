@@ -38,4 +38,21 @@ struct SystemStatus: Codable {
     let pinentryConfiguredPath: String?
     /// The path to `pinentry-mac` that can be used for an automatic fix, if available.
     let pinentryAvailablePath: String?
+
+    // MARK: - Helper
+
+    /// How the helper's launch agent is registered with macOS.
+    let helperRegistration: HelperRegistrationState
+}
+
+/// `SMAppService.Status` of the helper's launch agent, as the helper reports it.
+enum HelperRegistrationState: String, Codable {
+    /// Registered and allowed to run: it starts at every login.
+    case enabled
+    /// Registered but switched off in System Settings → General → Login Items.
+    case requiresApproval
+    /// Not registered: started by a launch agent plist from an older install.
+    case notRegistered
+    /// macOS cannot find the launch agent in the app bundle.
+    case notFound
 }

@@ -26,8 +26,16 @@ Apple Mail on iOS has no MailKit extension support, so this is macOS only.
 brew install --cask mallocator/mailgpg/mailgpg
 ```
 
-The cask installs the app, pulls in GnuPG and pinentry-mac, and registers the
-background helper as a login item.
+The cask installs the app and pulls in GnuPG and pinentry-mac. It needs
+Homebrew 6.0.16 or later. Then open MailGPG.app once, after every install or
+upgrade: it starts the background helper and registers it as a login item. If
+macOS asks, allow it in System Settings → General → Login Items.
+
+```bash
+open /Applications/MailGPG.app
+```
+
+`brew uninstall --cask mailgpg` stops the helper and removes it.
 
 To build it yourself instead, see [SETUP.md](SETUP.md) — it needs Xcode and an
 Apple Developer account, and `./build.sh` does the rest.
@@ -172,6 +180,8 @@ several keys carry it, the newest; a signed message that quotes an encrypted
 block is verified instead of being taken for encrypted.
 
 New: Autocrypt, protected subject lines, and the offer policy described above.
+The app registers its own launch agent with `SMAppService` instead of the cask
+writing one, which Homebrew 7's sandboxed cask steps can no longer start.
 
 Performance: PGP detection runs before hashing so plaintext mail costs almost
 nothing, the decode cache is bounded, `gpg --card-status` no longer runs on
@@ -186,7 +196,9 @@ MailKit extensions are sandboxed and a sandboxed process cannot spawn `gpg`, so
 there are two processes:
 
 - **`MailGPG.app`** — unsandboxed background helper, runs GPG, exposes results
-  over XPC. Started at login by the launch agent the cask installs.
+  over XPC. Its launch agent ships in the bundle
+  (`Contents/Library/LaunchAgents`); opening the app registers it with
+  `SMAppService`, and launchd starts the helper at login.
 - **`MailGPGExtension`** — the sandboxed MailKit extension Mail loads. All UI,
   no crypto; everything goes through XPC.
 

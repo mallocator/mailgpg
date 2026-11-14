@@ -29,6 +29,11 @@ struct DiagnosticsView: View {
                         .foregroundStyle(.secondary)
                 }
             } else if let s = status {
+                // MARK: Helper
+                Section("Helper") {
+                    helperRow(s.helperRegistration)
+                }
+
                 // MARK: GPG Binary
                 Section("GPG Binary") {
                     if let path = s.gpgPath {
@@ -125,6 +130,37 @@ struct DiagnosticsView: View {
         }
         .navigationTitle("Diagnostics")
         .task { await reload() }
+    }
+
+    /// The helper answered, so it runs; this says whether it will at next login.
+    @ViewBuilder
+    private func helperRow(_ state: HelperRegistrationState) -> some View {
+        switch state {
+        case .enabled:
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text("Running, starts at login")
+            }
+        case .requiresApproval:
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+                Text("Running, switched off in Login Items")
+            }
+            Text("It won't start at the next login. Turn on MailGPG in System Settings → General → Login Items.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .notRegistered, .notFound:
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+                Text("Running from an older install")
+            }
+            Text("Open MailGPG.app once to register it as a login item.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     @ViewBuilder

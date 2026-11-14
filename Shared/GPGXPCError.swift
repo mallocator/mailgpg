@@ -24,6 +24,10 @@ enum GPGXPCError: Int, Error {
     /// JSON encoding or decoding failed on one side of the bridge.
     case encodingFailed     = 5
 
+    /// What the extension tells the user when it cannot reach the helper.
+    static let hostAppNotRunningMessage = "The MailGPG helper is not running. Open MailGPG.app once to start it; "
+        + "if macOS asks, allow it in System Settings → General → Login Items."
+
     /// Create an `NSError` suitable for sending through XPC.
     static func make(_ code: GPGXPCError, message: String? = nil) -> NSError {
         var info: [String: Any] = [:]

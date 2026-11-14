@@ -228,7 +228,8 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
             agentRunning: agentRunning,
             pinentryState: state,
             pinentryConfiguredPath: configuredPath,
-            pinentryAvailablePath: availablePath
+            pinentryAvailablePath: availablePath,
+            helperRegistration: HelperRegistration.state
         )
         do {
             reply(try xpcEncode(status), nil)

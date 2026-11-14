@@ -105,8 +105,12 @@ gpgconf --kill gpg-agent
 
 It picks a Developer ID certificate if you have one and falls back to automatic
 Apple Development signing otherwise — either is fine for a Mac you build on
-yourself. It installs to `/Applications/MailGPG.app`, writes the LaunchAgent
-plist and boots it.
+yourself. It installs to `/Applications/MailGPG.app` and opens it once; the app
+registers its bundled launch agent with `SMAppService`, launchd starts the
+helper, and a window says whether that worked. If it says the helper is
+switched off, turn on MailGPG in System Settings → General → Login Items. A
+`~/Library/LaunchAgents/net.pyxzl.mailgpg.plist` from an older build is
+stopped and removed on the way.
 
 If Xcode complains about the app group `group.net.pyxzl.mailgpg`, that group has
 to exist on your account. Easiest fix is to open `MailGPG.xcodeproj`, select

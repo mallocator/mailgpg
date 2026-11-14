@@ -101,7 +101,7 @@ struct ComposeSecurityView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.yellow)
-                        Text("MailGPG host app is not running. Open it to enable GPG operations.")
+                        Text(GPGXPCError.hostAppNotRunningMessage)
                             .font(.caption)
                             .foregroundStyle(.primary)
                     }

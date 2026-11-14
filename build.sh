@@ -4,11 +4,8 @@
 set -euo pipefail
 
 TEAM_ID="3HKD37M482"
-APP_BUNDLE_ID="net.pyxzl.MailGPG"
 LAUNCH_LABEL="net.pyxzl.mailgpg"
-MACH_SERVICE="net.pyxzl.mailgpg.gpgservice"
 APP_PATH="/Applications/MailGPG.app"
-PLIST="$HOME/Library/LaunchAgents/${LAUNCH_LABEL}.plist"
 DERIVED="$(mktemp -d)"
 REPO="$(cd "$(dirname "$0")" && pwd)"
 # The log lands in the repo rather than a temp dir so it can be read from
@@ -103,35 +100,14 @@ launchctl bootout "gui/$UID/$LAUNCH_LABEL" 2>/dev/null || true
 rm -rf "$APP_PATH"
 cp -R "$BUILT" "$APP_PATH"
 
-say "Registering the login agent"
-mkdir -p "$HOME/Library/LaunchAgents"
-cat > "$PLIST" <<PLISTEOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${LAUNCH_LABEL}</string>
-  <key>AssociatedBundleIdentifiers</key>
-  <string>${APP_BUNDLE_ID}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${APP_PATH}/Contents/MacOS/MailGPG</string>
-  </array>
-  <key>KeepAlive</key>
-  <true/>
-  <key>MachServices</key>
-  <dict>
-    <key>${MACH_SERVICE}</key>
-    <true/>
-  </dict>
-</dict>
-</plist>
-PLISTEOF
-
-launchctl bootstrap "gui/$UID" "$PLIST"
-sleep 2
-launchctl print "gui/$UID/$LAUNCH_LABEL" | grep -E "state|pid" || true
+# Opening the app registers its bundled launch agent with SMAppService and
+# shows whether that worked; launchd then starts the helper. It also removes
+# the ~/Library/LaunchAgents plist older builds wrote.
+say "Registering the helper"
+open "$APP_PATH"
+sleep 3
+launchctl print "gui/$UID/$LAUNCH_LABEL" | grep -E "state|pid" \
+  || echo "Helper not running yet: see the MailGPG window."
 
 if [ "$RUN_TESTS" = "1" ]; then
   say "Running tests"
