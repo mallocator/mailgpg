@@ -113,10 +113,12 @@ import Foundation
         reply: @escaping (_ keyInfoJSON: Data?, Error?) -> Void
     )
 
-    /// Import a binary (non-armored) transferable public key — the form
-    /// Autocrypt headers carry. Returns a JSON-encoded `KeyInfo`.
-    func importKeyData(
+    /// Import the binary key an Autocrypt header carries for `addr`. Rejects
+    /// secret keys and anything but exactly one key, and keeps only the user
+    /// ID whose address is `addr`. Returns a JSON-encoded `KeyInfo`.
+    func importAutocryptKey(
         keyData: Data,
+        addr: String,
         reply: @escaping (_ keyInfoJSON: Data?, Error?) -> Void
     )
 

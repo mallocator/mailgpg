@@ -236,7 +236,7 @@ extension GPGServiceImpl {
         guard let keyData = armoredKey.data(using: .utf8) else {
             reply(nil, GPGXPCError.make(.encodingFailed)); return
         }
-        importKeyData(keyData: keyData, reply: reply)
+        importKeys(keyData: keyData, reply: reply)
     }
 
     /// Export a public key in binary form for Autocrypt `keydata`.
@@ -259,11 +259,61 @@ extension GPGServiceImpl {
         }
     }
 
-    func importKeyData(keyData: Data,
-                       reply: @escaping (Data?, Error?) -> Void) {
+    /// Import an Autocrypt key, keeping only the user ID for `addr`.
+    ///
+    /// A plain import of the header would take whatever it carries: several
+    /// keys, user IDs for other people, even unprotected secret keys, which
+    /// `--import --batch` takes without a prompt. A secret key with the user's
+    /// own address would become the signing key and a recipient of every Sent
+    /// copy; a user ID for someone else would let the sender sign as them.
+    func importAutocryptKey(keyData: Data, addr: String,
+                            reply: @escaping (Data?, Error?) -> Void) {
+        do {
+            let addr = try validatedAutocryptAddress(addr)
+            let (shown, showErr, showCode) = try gpg(
+                ["--batch", "--show-keys", "--with-colons"], input: keyData)
+            guard showCode == 0 else {
+                throw GPGXPCError.make(.gpgFailed, message: "gpg show-keys failed: \(showErr)")
+            }
+            try checkAutocryptKeyListing(String(data: shown, encoding: .utf8) ?? "")
+            importKeys(keyData: keyData,
+                       extraArgs: ["--import-filter", "keep-uid=mbox = \(addr)"],
+                       reply: reply)
+        } catch {
+            reply(nil, error as NSError)
+        }
+    }
+
+    /// The address goes into a gpg filter expression, so it must not carry
+    /// whitespace or the characters that expression syntax gives meaning to.
+    func validatedAutocryptAddress(_ addr: String) throws -> String {
+        let forbidden = Set("\"&|\\".unicodeScalars)
+        let valid = addr.contains("@") && addr.unicodeScalars.allSatisfy {
+            $0.value > 0x20 && $0.value != 0x7F && !forbidden.contains($0)
+        }
+        guard valid else {
+            throw GPGXPCError.make(.encodingFailed, message: "Invalid Autocrypt address")
+        }
+        return addr.lowercased()
+    }
+
+    /// Accept a `--show-keys --with-colons` listing only when it holds exactly
+    /// one key and that key is public.
+    func checkAutocryptKeyListing(_ listing: String) throws {
+        let records = listing.split(separator: "\n").map { $0.prefix { $0 != ":" } }
+        guard !records.contains("sec"), !records.contains("ssb") else {
+            throw GPGXPCError.make(.gpgFailed, message: "Autocrypt keydata holds a secret key")
+        }
+        guard records.filter({ $0 == "pub" }).count == 1 else {
+            throw GPGXPCError.make(.gpgFailed, message: "Autocrypt keydata must hold exactly one key")
+        }
+    }
+
+    private func importKeys(keyData: Data, extraArgs: [String] = [],
+                            reply: @escaping (Data?, Error?) -> Void) {
         do {
             let (_, stderr, statusText, code) = try gpgWithStatus(
-                ["--import", "--batch", "--yes"],
+                ["--import", "--batch", "--yes"] + extraArgs,
                 input: keyData)
             guard code == 0 else {
                 throw GPGXPCError.make(.gpgFailed, message: "gpg import failed: \(stderr)")

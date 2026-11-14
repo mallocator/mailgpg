@@ -253,7 +253,9 @@ policy is loosened to the point of pointlessness.
 
 **Autocrypt** (off by default, toggle in the compose panel) — outgoing mail
 carries your public key in an `Autocrypt` header, and keys are harvested from
-incoming mail whose `addr` matches the From address. Key exchange then happens
+incoming mail whose `addr` matches the From address. The header must carry
+exactly one public key (secret keys and extra keys are rejected), and only its
+user ID for that address is imported. Key exchange then happens
 through the correspondence rather than a keyserver you have to trust. Harvested
 keys are still subject to pinning, so a later substitution is still caught.
 

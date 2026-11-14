@@ -221,9 +221,9 @@ actor GPGService {
         }
     }
 
-    func importKeyData(_ keyData: Data) async throws -> KeyInfo {
+    func importAutocryptKey(_ keyData: Data, addr: String) async throws -> KeyInfo {
         let json: Data = try await call { proxy, relay in
-            proxy.importKeyData(keyData: keyData) { data, error in
+            proxy.importAutocryptKey(keyData: keyData, addr: addr) { data, error in
                 relay.resume(with: data, error: error)
             }
         }

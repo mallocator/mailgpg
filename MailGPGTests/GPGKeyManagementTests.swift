@@ -117,6 +117,95 @@ final class GPGKeyManagementTests: XCTestCase {
         XCTAssertFalse(key.hasSecretKey, "Re-imported public-only key must not have secret key")
     }
 
+    // MARK: - Autocrypt import
+
+    private func importAutocrypt(_ keyData: Data, addr: String) -> (KeyInfo?, Error?) {
+        wait { done in
+            svc.importAutocryptKey(keyData: keyData, addr: addr) { data, error in
+                done((data.flatMap { try? xpcDecode(KeyInfo.self, from: $0) }, error))
+            }
+        }
+    }
+
+    /// The colon-listing records of `kind` (pub, uid, fpr, …) for `keys`.
+    private func records(_ kind: String, _ keys: [String] = []) throws -> [Substring] {
+        let (out, _, _) = try homedir.run(["--list-keys", "--with-colons"] + keys)
+        return try XCTUnwrap(String(data: out, encoding: .utf8)).split(separator: "\n")
+            .filter { $0.hasPrefix(kind + ":") }
+    }
+
+    private func publicKeyCount() throws -> Int {
+        try records("pub").count
+    }
+
+    /// An unprotected secret key with the user's own address would become the
+    /// signing key on the next send.
+    func testAutocryptImportRejectsSecretKey() throws {
+        let (secret, _, code) = try homedir.run(["--export-secret-keys", homedir.fingerprint])
+        XCTAssertEqual(code, 0)
+        let fp = homedir.fingerprint
+        _ = try homedir.run(["--batch", "--yes", "--delete-secret-and-public-key", fp])
+
+        let (key, error) = importAutocrypt(secret, addr: homedir.email)
+        XCTAssertNil(key)
+        XCTAssertNotNil(error)
+        XCTAssertEqual(try publicKeyCount(), 0, "Nothing may be imported")
+        let (secrets, _, _) = try homedir.run(["--list-secret-keys", "--with-colons"])
+        XCTAssertTrue(secrets.isEmpty, "No secret key may be imported")
+    }
+
+    func testAutocryptImportRejectsTwoKeys() throws {
+        let (_, genErr, genCode) = try homedir.run(
+            ["--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+             "--quick-gen-key", "Other <other@example.com>", "ed25519", "sign", "0"])
+        XCTAssertEqual(genCode, 0, "Key generation failed: \(genErr)")
+        let otherFP = try XCTUnwrap(records("fpr", ["other@example.com"]).first?
+            .split(separator: ":", omittingEmptySubsequences: false)[9])
+        let (both, _, _) = try homedir.run(["--export", homedir.fingerprint, String(otherFP)])
+        _ = try homedir.run(["--batch", "--yes", "--delete-secret-and-public-key", String(otherFP)])
+
+        let (key, error) = importAutocrypt(both, addr: homedir.email)
+        XCTAssertNil(key)
+        XCTAssertNotNil(error)
+        XCTAssertEqual(try publicKeyCount(), 1, "The second key may not be imported")
+    }
+
+    /// A user ID for someone else would let the sender sign mail as them.
+    func testAutocryptImportKeepsOnlySenderUID() throws {
+        let fp = homedir.fingerprint
+        let (_, uidErr, uidCode) = try homedir.run(
+            ["--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+             "--quick-add-uid", fp, "Bank <alice@bank.example>"])
+        XCTAssertEqual(uidCode, 0, "Adding a UID failed: \(uidErr)")
+        let (keyData, _, _) = try homedir.run(["--export", fp])
+        _ = try homedir.run(["--batch", "--yes", "--delete-secret-and-public-key", fp])
+
+        let (key, error) = importAutocrypt(keyData, addr: homedir.email.uppercased())
+        XCTAssertNil(error, "Import error: \(String(describing: error))")
+        XCTAssertEqual(key?.fingerprint, fp)
+
+        let uids = try records("uid", [fp])
+        XCTAssertEqual(uids.count, 1)
+        XCTAssertTrue(uids.first?.contains(homedir.email) ?? false)
+    }
+
+    func testAutocryptImportRejectsKeyWithoutSenderUID() throws {
+        let fp = homedir.fingerprint
+        let (keyData, _, _) = try homedir.run(["--export", fp])
+        _ = try homedir.run(["--batch", "--yes", "--delete-secret-and-public-key", fp])
+
+        let (key, error) = importAutocrypt(keyData, addr: "someone@example.com")
+        XCTAssertNil(key)
+        XCTAssertNotNil(error)
+        XCTAssertEqual(try publicKeyCount(), 0)
+    }
+
+    func testAutocryptImportRejectsAddressThatBreaksFilter() throws {
+        let (keyData, _, _) = try homedir.run(["--export", homedir.fingerprint])
+        let (_, error) = importAutocrypt(keyData, addr: "a@x.example || mbox =~ @")
+        assertEncodingFailed(error)
+    }
+
     // MARK: - Delete
 
     func testDeletePublicKey() throws {
