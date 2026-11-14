@@ -174,9 +174,9 @@ extension GPGServiceImpl {
         var isEncrypted = false
 
         for line in status.components(separatedBy: "\n") {
-            if line.contains("[GNUPG:] DECRYPTION_OKAY") {
+            if statusKeyword(of: line) == "DECRYPTION_OKAY" {
                 isEncrypted = true
-            } else if line.contains("[GNUPG:] GOODSIG") {
+            } else if statusKeyword(of: line) == "GOODSIG" {
                 let p = line.components(separatedBy: " ")
                 if p.count >= 4 {
                     let keyID = p[2]
@@ -185,15 +185,15 @@ extension GPGServiceImpl {
                     pending.append((email: email, keyID: keyID))
                     lastKeyID = keyID
                 }
-            } else if line.contains("[GNUPG:] VALIDSIG"), let kid = lastKeyID {
+            } else if statusKeyword(of: line) == "VALIDSIG", let kid = lastKeyID {
                 let p = line.components(separatedBy: " ")
                 if p.count >= 3 { fingerprintByKeyID[kid] = p[2] }
                 lastKeyID = nil
-            } else if line.contains("[GNUPG:] BADSIG") {
+            } else if statusKeyword(of: line) == "BADSIG" {
                 let p = line.components(separatedBy: " ")
                 let keyID = p.count >= 3 ? p[2] : "unknown"
                 return .signatureInvalid(reason: "Bad signature from key \(keyID)")
-            } else if line.contains("[GNUPG:] REVKEYSIG") {
+            } else if statusKeyword(of: line) == "REVKEYSIG" {
                 // The maths checked out, but the signer revoked this key. GPG
                 // emits this instead of GOODSIG, so without an explicit branch
                 // it reads as "no signature" — far weaker than what happened.
@@ -202,14 +202,14 @@ extension GPGServiceImpl {
                 return .signatureInvalid(
                     reason: "Signed with key \(keyID), which its owner has revoked. "
                           + "Treat this signature as worthless.")
-            } else if line.contains("[GNUPG:] EXPKEYSIG") {
+            } else if statusKeyword(of: line) == "EXPKEYSIG" {
                 let p = line.components(separatedBy: " ")
                 let keyID = p.count >= 3 ? p[2] : "unknown"
                 return .signatureInvalid(
                     reason: "Signed with key \(keyID), which has expired.")
-            } else if line.contains("[GNUPG:] EXPSIG") {
+            } else if statusKeyword(of: line) == "EXPSIG" {
                 return .signatureInvalid(reason: "The signature itself has expired.")
-            } else if line.contains("[GNUPG:] NO_PUBKEY") {
+            } else if statusKeyword(of: line) == "NO_PUBKEY" {
                 let p = line.components(separatedBy: " ")
                 let keyID = p.count >= 3 ? p[2] : "unknown"
                 return .keyNotFound(keyID: keyID)
@@ -234,7 +234,7 @@ extension GPGServiceImpl {
         var fingerprint: String? = nil
 
         for line in combined.components(separatedBy: "\n") {
-            if line.contains("[GNUPG:] GOODSIG") {
+            if statusKeyword(of: line) == "GOODSIG" {
                 let p = line.components(separatedBy: " ")
                 if p.count >= 4 {
                     keyID = p[2]
@@ -242,27 +242,27 @@ extension GPGServiceImpl {
                     let (_, email) = parseUID(p[3...].joined(separator: " "))
                     name = email.isEmpty ? p[3...].joined(separator: " ") : email
                 }
-            } else if line.contains("[GNUPG:] VALIDSIG"), keyID != nil {
+            } else if statusKeyword(of: line) == "VALIDSIG", keyID != nil {
                 let p = line.components(separatedBy: " ")
                 if p.count >= 3 { fingerprint = p[2] }
-            } else if line.contains("[GNUPG:] BADSIG") {
+            } else if statusKeyword(of: line) == "BADSIG" {
                 let p = line.components(separatedBy: " ")
                 let kid = p.count >= 3 ? p[2] : "unknown"
                 return .signatureInvalid(reason: "Bad signature from key \(kid)")
-            } else if line.contains("[GNUPG:] REVKEYSIG") {
+            } else if statusKeyword(of: line) == "REVKEYSIG" {
                 let p = line.components(separatedBy: " ")
                 let kid = p.count >= 3 ? p[2] : "unknown"
                 return .signatureInvalid(
                     reason: "Signed with key \(kid), which its owner has revoked. "
                           + "Treat this signature as worthless.")
-            } else if line.contains("[GNUPG:] EXPKEYSIG") {
+            } else if statusKeyword(of: line) == "EXPKEYSIG" {
                 let p = line.components(separatedBy: " ")
                 let kid = p.count >= 3 ? p[2] : "unknown"
                 return .signatureInvalid(
                     reason: "Signed with key \(kid), which has expired.")
-            } else if line.contains("[GNUPG:] EXPSIG") {
+            } else if statusKeyword(of: line) == "EXPSIG" {
                 return .signatureInvalid(reason: "The signature itself has expired.")
-            } else if line.contains("[GNUPG:] NO_PUBKEY") {
+            } else if statusKeyword(of: line) == "NO_PUBKEY" {
                 let p = line.components(separatedBy: " ")
                 let kid = p.count >= 3 ? p[2] : "unknown"
                 return .keyNotFound(keyID: kid)
@@ -326,10 +326,26 @@ extension GPGServiceImpl {
         return nil
     }
 
+    /// The keyword of a `[GNUPG:] KEYWORD args…` status line, or nil.
+    ///
+    /// Matched as a token, never as a substring: user IDs in GOODSIG and
+    /// BADSIG lines are not escaped, so a key whose UID reads
+    /// `[GNUPG:] GOODSIG …` made a BADSIG line look good.
+    func statusKeyword(of line: String) -> String? {
+        let fields = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: false)
+        guard fields.count >= 2, fields[0] == "[GNUPG:]" else { return nil }
+        return String(fields[1])
+    }
+
+    /// Whether GPG wrote a `keyword` status line.
+    func hasStatus(_ keyword: String, in status: String) -> Bool {
+        status.components(separatedBy: "\n").contains { statusKeyword(of: $0) == keyword }
+    }
+
     /// Extract the fingerprint from `[GNUPG:] IMPORT_OK <flags> <fingerprint>` status output.
     func parseImportedFingerprint(from statusOutput: String) -> String? {
         for line in statusOutput.components(separatedBy: "\n") {
-            if line.contains("[GNUPG:] IMPORT_OK") {
+            if statusKeyword(of: line) == "IMPORT_OK" {
                 let p = line.components(separatedBy: " ")
                 if p.count >= 4 { return p[3] }
             }

@@ -222,4 +222,17 @@ final class RawMessageTests: XCTestCase {
         XCTAssertEqual(RawMessage.pgpContent(of: Data(message.utf8)), .init(isEncrypted: false, isSigned: false))
         XCTAssertNil(RawMessage.signedParts(of: Data(message.utf8)))
     }
+
+    // MARK: - Header values
+
+    func testHeaderValues_unfoldsAFoldedFrom() {
+        // Mail unfolds this and shows alice@bank.example as the sender.
+        let message = "From:\r\n alice@bank.example\r\nTo: bob@example.com\r\n\r\nHi"
+        XCTAssertEqual(RawMessage.headerValues("from", in: Data(message.utf8)), ["alice@bank.example"])
+    }
+
+    func testHeaderValues_listsEveryOccurrence() {
+        let message = "From: a@example.com\nFrom: b@example.com\n\nHi"
+        XCTAssertEqual(RawMessage.headerValues("From", in: Data(message.utf8)), ["a@example.com", "b@example.com"])
+    }
 }

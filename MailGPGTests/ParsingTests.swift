@@ -570,4 +570,30 @@ final class ParsingTests: XCTestCase {
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         )
     }
+
+    // MARK: - Status keywords, not text
+
+    /// User IDs in GOODSIG/BADSIG lines are not escaped, so a key's UID can
+    /// carry text that looks like another status line.
+    func testParseVerifyStatus_badSigWithForgedGoodsigInUID() {
+        let status = "[GNUPG:] NEWSIG\n"
+            + "[GNUPG:] BADSIG 1122334455667788 Mallory [GNUPG:] GOODSIG 1122334455667788 <alice@bank.example>\n"
+        guard case .signatureInvalid = svc.parseVerifyStatus(status: status) else {
+            return XCTFail("a BADSIG line was read as good")
+        }
+    }
+
+    func testParseDecryptStatus_badSigWithForgedGoodsigInUID() {
+        let status = "[GNUPG:] DECRYPTION_OKAY\n"
+            + "[GNUPG:] BADSIG 1122334455667788 Mallory [GNUPG:] GOODSIG 1122334455667788 <alice@bank.example>\n"
+        guard case .signatureInvalid = svc.parseDecryptStatus(status: status) else {
+            return XCTFail("a BADSIG line was read as good")
+        }
+    }
+
+    func testHasStatus_matchesTheKeywordNotText() {
+        XCTAssertTrue(svc.hasStatus("DECRYPTION_OKAY", in: "[GNUPG:] BEGIN_DECRYPTION\n[GNUPG:] DECRYPTION_OKAY\n"))
+        XCTAssertFalse(svc.hasStatus("DECRYPTION_OKAY",
+                                     in: "[GNUPG:] BADSIG 1122334455667788 x [GNUPG:] DECRYPTION_OKAY\n"))
+    }
 }

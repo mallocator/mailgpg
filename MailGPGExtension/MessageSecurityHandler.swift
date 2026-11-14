@@ -472,20 +472,9 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
     // MARK: - Decoding (incoming)
 
-    /// Extract a header value from raw RFC 2822 message data (case-insensitive).
+    /// The first value of header `name`, unfolded.
     private nonisolated static func headerValue(_ name: String, in data: Data) -> String? {
-        // Lenient: one stray byte in the header block must not blind us to
-        // every header in the message.
-        // swiftlint:disable:next optional_data_string_conversion
-        let headerStr = String(decoding: RawMessage.headerBlock(in: data), as: UTF8.self)
-        let target = name.lowercased() + ":"
-        for line in headerStr.components(separatedBy: "\n") {
-            let trimmed = line.hasSuffix("\r") ? String(line.dropLast()) : line
-            if trimmed.lowercased().hasPrefix(target) {
-                return trimmed.dropFirst(target.count).trimmingCharacters(in: .whitespaces)
-            }
-        }
-        return nil
+        RawMessage.headerValues(name, in: data).first
     }
 
     /// Decode RFC 2047 encoded words (e.g. `=?UTF-8?Q?verschl=C3=BCsselter?=`) in a header value.
@@ -677,9 +666,16 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         }
         guard !signers.isEmpty else { return status }
 
-        guard let fromHeader = headerValue("from", in: messageData) else { return status }
-        let from = bareEmail(inHeaderValue: decodeMIMEWords(fromHeader))
-        guard !from.isEmpty else { return status }
+        // A signature without a sender to check it against authenticates
+        // nothing Mail shows: no From, two From headers, or one that yields
+        // no address all report invalid rather than passing unchecked.
+        let fromHeaders = RawMessage.headerValues("from", in: messageData)
+        let from = fromHeaders.count == 1 ? bareEmail(inHeaderValue: decodeMIMEWords(fromHeaders[0])) : ""
+        guard !from.isEmpty else {
+            log.error("signed message without a single usable From address — signature will be reported as invalid")
+            return .signatureInvalid(
+                reason: "This message has no single sender address, so the signature does not authenticate it.")
+        }
 
         if signers.contains(where: { $0.hasAddress(from) }) { return status }
 

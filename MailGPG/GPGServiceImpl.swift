@@ -380,7 +380,7 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
             // decryption itself succeeded. Treat DECRYPTION_OKAY as the
             // authoritative success indicator and only hard-fail if we got
             // neither that status nor a zero exit.
-            let decryptionOkay = statusText.contains("[GNUPG:] DECRYPTION_OKAY")
+            let decryptionOkay = hasStatus("DECRYPTION_OKAY", in: statusText)
             guard code == 0 || decryptionOkay else {
                 throw GPGXPCError.make(.gpgFailed,
                     message: "gpg decrypt failed (exit \(code)): \(stderr)")

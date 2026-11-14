@@ -86,28 +86,39 @@ nonisolated enum RawMessage {
     /// or more than one. Which of two Content-Type headers Mail would go by is
     /// not ours to guess.
     static func contentType(of data: Data) -> String? {
+        let values = headerValues("content-type", in: data)
+        return values.count == 1 ? values[0] : nil
+    }
+
+    /// Every value of header `name` in the header block, in order, with folded
+    /// continuation lines joined (RFC 5322 §2.2.3). Reading only the first
+    /// line made a folded `From:` look empty, which skipped the check that
+    /// the signer carries the sender's address.
+    static func headerValues(_ name: String, in data: Data) -> [String] {
         // Lenient: headers are ASCII by specification, and a stray byte must
-        // not hide the Content-Type.
+        // not hide a header.
         // swiftlint:disable:next optional_data_string_conversion
         let block = String(decoding: headerBlock(in: data), as: UTF8.self)
+        let prefix = name.lowercased() + ":"
         var values: [String] = []
         var current: String?
         // "\r\n" is a single Character, so it is a separator of its own.
         for line in block.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "\n" || $0 == "\r\n" }) {
             if line.first == " " || line.first == "\t" {
                 if let value = current {
-                    current = value + " " + line.trimmingCharacters(in: .whitespaces)
+                    let continuation = line.trimmingCharacters(in: .whitespaces)
+                    current = value.isEmpty ? continuation : value + " " + continuation
                 }
                 continue
             }
             if let value = current { values.append(value) }
             current = nil
-            if line.lowercased().hasPrefix("content-type:") {
-                current = line.dropFirst("content-type:".count).trimmingCharacters(in: .whitespaces)
+            if line.lowercased().hasPrefix(prefix) {
+                current = line.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
             }
         }
         if let value = current { values.append(value) }
-        return values.count == 1 ? values[0] : nil
+        return values
     }
 
     /// `type/subtype` of a Content-Type value, lowercased.
