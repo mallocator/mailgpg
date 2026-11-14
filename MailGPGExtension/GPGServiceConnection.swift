@@ -41,7 +41,7 @@ final class GPGServiceConnection {
 
     /// Guards the three mutable fields below.
     ///
-    /// `proxy()` is called from the GPGService actor, but XPC delivers its
+    /// `proxy(onError:)` is called from the GPGService actor, but XPC delivers its
     /// interruption and invalidation handlers on its own queues, and the
     /// reconnect runs in a detached Task — so these are written from several
     /// threads with no relationship to each other. Concurrent access to a
@@ -61,7 +61,12 @@ final class GPGServiceConnection {
 
     /// Returns a proxy object the caller can cast to `GPGXPCProtocol` and call methods on.
     /// Throws `GPGXPCError.hostAppNotRunning` if no connection is available.
-    func proxy() throws -> GPGXPCProtocol {
+    ///
+    /// `onError` runs when a call made on this proxy fails at the XPC layer.
+    /// NSXPC then never calls the method's reply block, so `onError` is the
+    /// caller's only chance to fail whatever awaits that reply — see
+    /// `withXPCReply`.
+    func proxy(onError: @escaping @Sendable (Error) -> Void) throws -> GPGXPCProtocol {
         lock.lock()
         let existing = connection
         lock.unlock()
@@ -78,11 +83,12 @@ final class GPGServiceConnection {
 
         // `remoteObjectProxyWithErrorHandler` returns a proxy object.
         // Any XPC error that occurs mid-call is delivered to the error handler,
-        // which we route into our availability tracking.
+        // which we route into our availability tracking and back to the caller.
         let proxy = conn.remoteObjectProxyWithErrorHandler { [weak self] error in
             let nsError = error as NSError
             log.error("remote error domain=\(nsError.domain, privacy: .public) code=\(nsError.code)")
             self?.handleInvalidation()
+            onError(error)
         }
 
         // We configured the interface with GPGXPCProtocol, so XPC hands back a

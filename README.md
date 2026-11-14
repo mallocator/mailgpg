@@ -168,13 +168,15 @@ to as hidden recipients rather than being disclosed to everyone.
 Correctness fixes: the decode cache is keyed on message content rather than on
 headers two messages can share — which made Mail render one message's plaintext
 in place of another's; the signing key is chosen by the From address and, where
-several keys carry it, the newest.
+several keys carry it, the newest; a signed message that quotes an encrypted
+block is verified instead of being taken for encrypted.
 
 New: Autocrypt, protected subject lines, and the offer policy described above.
 
 Performance: PGP detection runs before hashing so plaintext mail costs almost
-nothing, the decode cache is bounded, and `gpg --card-status` no longer runs on
-every send.
+nothing, the decode cache is bounded, `gpg --card-status` no longer runs on
+every send, and one stuck XPC call or gpg run no longer stalls Mail's viewer for
+every message.
 
 Full detail, including what is still open, is in [SETUP.md](SETUP.md).
 

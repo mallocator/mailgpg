@@ -265,6 +265,34 @@ the outgoing header never appears, check the raw source of a sent message for an
 `Autocrypt:` line — a very long unfolded header is the most likely thing for
 Mail to mangle, and folding it is the first thing to try.
 
+## A stuck call no longer stalls the viewer
+
+Mail serializes decode requests to the extension, so one `decodedMessage` call
+that never returned made every message spin, PGP or not.
+
+**Dropped XPC replies** (`Shared/XPCReply.swift`, `MailGPGExtension/GPGService.swift`)
+— NSXPC reports a failed call (the host app quit or relaunched mid-call) to the
+proxy's error handler instead of the reply block, and only `ping()` handled
+that. Every call now goes through `withXPCReply`, whose error handler fails the
+call.
+
+**Bounded wait** (`Shared/DecodeCache.swift`) — `decodedMessage` gives up after
+60 s, room for a passphrase prompt, and Mail shows the raw message. The decode
+keeps running and its result is still cached; asking again while it runs waits
+for it instead of starting another gpg and another prompt.
+
+**Header-first detection** (`Shared/RawMessage.swift`) — a multipart/signed
+message quoting an armoured encrypted block went down the decrypt path, was
+labelled encrypted, and its signature was never checked. When the headers say
+PGP/MIME the body is no longer scanned. The header block ends at the first blank
+line, CRLF or LF, searched within 256 KB: the split the host app uses too.
+
+To see the first two, open an encrypted message not opened since Mail started
+and leave the passphrase prompt up. After 60 s the raw message appears; enter
+the passphrase, reopen the message, and it shows decrypted with no second
+prompt. Quitting the host app while the prompt is up should show the raw
+message at once.
+
 ## Known gap: a failed decryption explains nothing
 
 When decryption fails — you do not hold the key, the ciphertext is damaged —

@@ -56,30 +56,10 @@ extension GPGServiceImpl {
     }
 
     /// Split a raw RFC 2822 message into its header block (as String) and body (as Data).
-    /// The separator between headers and body is either CRLFCRLF or LFLF.
+    /// The separator is the first blank line, CRLF or LF: see `RawMessage.endOfHeaders`,
+    /// which the extension's detection shares.
     func splitMessage(_ data: Data) -> (headers: String, body: Data) {
-        // Find whichever blank-line sequence comes FIRST in the message.
-        // Trying "\r\n\r\n" before "\n\n" is wrong: if the headers use LF but the
-        // body contains CRLF content (e.g. quoted text from a decrypted Mailvelope
-        // message), we'd split at a CRLF blank line *inside the body* instead of
-        // the real "\n\n" header/body separator — corrupting the header/body split
-        // and causing lineEnding() to detect CRLF, which makes Mail.app crash.
-        let crlfSep = Data("\r\n\r\n".utf8)
-        let lfSep   = Data("\n\n".utf8)
-        let crlfRange = data.range(of: crlfSep)
-        let lfRange   = data.range(of: lfSep)
-
-        let splitRange: Range<Data.Index>?
-        switch (crlfRange, lfRange) {
-        case (let c?, let l?) where c.lowerBound <= l.lowerBound:
-            splitRange = c   // \r\n\r\n comes first (or ties — prefer the longer match)
-        case (_, let l?):
-            splitRange = l   // \n\n comes first
-        case (let c?, nil):
-            splitRange = c
-        case (nil, nil):
-            splitRange = nil
-        }
+        let splitRange = RawMessage.endOfHeaders(in: data)
 
         // Decode leniently. A single non-UTF-8 byte anywhere in the header
         // block — a Latin-1 display name in a Received line is enough — used to

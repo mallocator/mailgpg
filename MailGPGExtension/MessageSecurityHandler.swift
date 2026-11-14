@@ -29,16 +29,14 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     /// across different messages, and when the bytes differ by so much as a
     /// header the worst case is a cache miss and a real decrypt.
     private var encodeCache: [String: MEMessageEncodingResult] = [:]
-    private var decodeCache: [String: MEDecodedMessage] = [:]
-    /// Keys of `decodeCache`, oldest first. Entries hold decrypted plaintext, so
-    /// the cache is bounded on both counts: unbounded growth would keep every
-    /// message you ever opened in memory, in the clear, until Mail quit.
-    private var decodeCacheOrder: [String] = []
-    private static let decodeCacheLimit = 24
+    /// Mail calls decodedMessage() from multiple threads concurrently; the
+    /// cache also tracks the decodes still running, so those calls share one
+    /// GPG decrypt of the same 17 MB message instead of starting one each.
+    /// A caller waits at most 60 s, room for a passphrase prompt; `DecodeCache`
+    /// explains that bound and the 24-entry one.
+    private let decodeCache = DecodeCache<MEDecodedMessage>(limit: 24, timeout: 60)
 
-    /// Serializes access to all three. Mail calls decodedMessage() from multiple
-    /// threads concurrently — without a lock they all miss the cache and start
-    /// parallel GPG decrypts of the same 17 MB message.
+    /// Serializes access to `encodeCache`.
     private let cacheLock = NSLock()
 
     /// Cache key for a message's content. SHA-256 over the raw bytes: hardware
@@ -47,9 +45,6 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     private nonisolated static func contentKey(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
-
-    private nonisolated static let inlinePGPMessageMarker = Data("-----BEGIN PGP MESSAGE-----".utf8)
-    private nonisolated static let inlinePGPSignedMarker = Data("-----BEGIN PGP SIGNED MESSAGE-----".utf8)
 
     private func cachedEncodeResult(for key: String?) -> MEMessageEncodingResult? {
         guard let key else { return nil }
@@ -64,30 +59,11 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         cacheLock.unlock()
     }
 
-    private func cachedDecodedMessage(for key: String) -> MEDecodedMessage? {
-        cacheLock.lock()
-        defer { cacheLock.unlock() }
-        return decodeCache[key]
-    }
-
-    private func storeDecodedMessage(_ decoded: MEDecodedMessage, for key: String) {
-        cacheLock.lock()
-        if decodeCache[key] == nil {
-            decodeCacheOrder.append(key)
-            while decodeCacheOrder.count > Self.decodeCacheLimit {
-                decodeCache.removeValue(forKey: decodeCacheOrder.removeFirst())
-            }
-        }
-        decodeCache[key] = decoded
-        cacheLock.unlock()
-    }
-
     func clearUUIDCache() {
         cacheLock.lock()
         encodeCache.removeAll()
-        decodeCache.removeAll()
-        decodeCacheOrder.removeAll()
         cacheLock.unlock()
+        decodeCache.removeAll()
     }
 
     private nonisolated static func logNSError(_ error: NSError, prefix: StaticString) {
@@ -453,7 +429,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                     : .signed(signers: signers)
                 if let decoded = Self.makeDecodedMessage(data: body, status: status,
                                                          wasEncrypted: shouldEncrypt) {
-                    self.storeDecodedMessage(decoded, for: Self.contentKey(encodedData.rawData))
+                    self.decodeCache.store(decoded, for: Self.contentKey(encodedData.rawData))
                     log.info("encode: cached decoded form under content hash")
                 }
 
@@ -498,13 +474,10 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
     /// Extract a header value from raw RFC 2822 message data (case-insensitive).
     private nonisolated static func headerValue(_ name: String, in data: Data) -> String? {
-        let eoh = data.range(of: Data("\r\n\r\n".utf8))
-               ?? data.range(of: Data("\n\n".utf8))
-        let headerData = eoh.map { Data(data[..<$0.lowerBound]) } ?? data.prefix(4096)
         // Lenient: one stray byte in the header block must not blind us to
         // every header in the message.
         // swiftlint:disable:next optional_data_string_conversion
-        let headerStr = String(decoding: headerData, as: UTF8.self)
+        let headerStr = String(decoding: RawMessage.headerBlock(in: data), as: UTF8.self)
         let target = name.lowercased() + ":"
         for line in headerStr.components(separatedBy: "\n") {
             let trimmed = line.hasSuffix("\r") ? String(line.dropLast()) : line
@@ -555,18 +528,6 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         return result
     }
 
-    /// Return only the RFC 2822 header block. This stays small for normal mail and
-    /// avoids decoding large message bodies just to decide whether MailGPG applies.
-    private nonisolated static func headerBlock(in data: Data) -> Data.SubSequence {
-        let eohRange = data.range(of: Data("\r\n\r\n".utf8))
-                    ?? data.range(of: Data("\n\n".utf8))
-        return eohRange.map { data[..<$0.lowerBound] } ?? data.prefix(4096)
-    }
-
-    private nonisolated static func containsASCII(_ needle: Data, in data: Data) -> Bool {
-        data.range(of: needle) != nil
-    }
-
     func decodedMessage(forMessageData data: Data) -> MEDecodedMessage? {
         // Detection runs BEFORE hashing, and that order matters. Nearly every
         // message Mail hands us is ordinary plaintext it is indexing; hashing
@@ -581,29 +542,11 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         //   - unnecessary XPC round-trips for plaintext mail
         //   - calling gpg --decrypt on multipart/signed mails we just sent, which
         //     would produce a spurious "decryption failed" banner in Sent
-        // Scan the entire header block rather than a fixed byte prefix: routing
-        // headers added by Gmail, Exchange, etc. (DKIM, ARC, Received, ...) can
-        // push Content-Type well past 4 KB.
-        let headerData = Data(Self.headerBlock(in: data))
-        // Lenient: headers are ASCII by specification, and a stray byte must
-        // not hide the Content-Type.
-        // swiftlint:disable:next optional_data_string_conversion
-        let preview = String(decoding: headerData, as: UTF8.self).lowercased()
-        // For inline PGP (e.g. Mailvelope), the PGP block is in the body, not the headers.
-        // Check for ASCII armor markers as bytes so normal large messages do not
-        // pay the cost of converting the whole body to a Swift String.
-        let isMIMEEncrypted = preview.contains("multipart/encrypted")
-                           && preview.contains("application/pgp-encrypted")
-        let isMIMESigned    = preview.contains("multipart/signed")
-                           && preview.contains("application/pgp-signature")
-        let isInlinePGP     = Self.containsASCII(Self.inlinePGPMessageMarker, in: data)
-        let isInlineSigned  = Self.containsASCII(Self.inlinePGPSignedMarker, in: data)
-        let isEncrypted = isMIMEEncrypted || isInlinePGP
-        let isSigned    = isMIMESigned    || isInlineSigned
+        let content = RawMessage.pgpContent(of: data)
 
-        log.debug("decodedMessage: \(data.count) bytes — encrypted=\(isEncrypted) signed=\(isSigned)")
+        log.debug("decodedMessage: \(data.count) bytes — encrypted=\(content.isEncrypted) signed=\(content.isSigned)")
 
-        guard isEncrypted || isSigned else {
+        guard content.isEncrypted || content.isSigned else {
             log.debug("decodedMessage: not encrypted or signed — returning nil")
             return nil
         }
@@ -619,94 +562,85 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         // Only PGP messages get hashed and cached. The key is the content
         // itself; header-derived keys collide — see the note on decodeCache.
         let cacheKey = Self.contentKey(data)
-        if let cached = cachedDecodedMessage(for: cacheKey) {
-            log.debug("decodedMessage: cache hit (\(data.count) bytes)")
-            return cached
-        }
 
-        // MailKit requires this method to be synchronous, but our GPG calls are async.
-        // We bridge with a DispatchSemaphore: a detached Task does the async work on its
-        // own thread, signals when done, and the calling thread waits.
-        // Using Task.detached avoids blocking a thread the cooperative executor might need.
-        var result: MEDecodedMessage? = nil
-        let semaphore = DispatchSemaphore(value: 0)
-
-        if isSigned && !isEncrypted {
-            // Signed-only: extract the signed data and detached signature,
-            // then call gpg --verify to check the signature.
-            Task.detached {
-                do {
-                    let (signedData, signatureData) = Self.extractSignedParts(from: data)
-                    guard let signedData, let signatureData else {
-                        log.error("decodedMessage: could not extract signed parts from multipart/signed")
-                        semaphore.signal()
-                        return
-                    }
-                    log.debug("decodedMessage: verifying signature (\(signedData.count) data bytes, \(signatureData.count) sig bytes)")
-                    let rawStatus = try await GPGService.shared.verify(data: signedData, signature: signatureData)
-                    log.debug("decodedMessage: verify completed")
-                    let status = Self.checkSignerMatchesSender(rawStatus, messageData: data)
-                    result = Self.makeDecodedMessage(data: data, status: status)
-                } catch let error as NSError {
-                    Self.logNSError(error, prefix: "decodedMessage: verify error")
-                    switch GPGXPCError(nsError: error) {
-                    case .gpgFailed:
-                        result = Self.makeDecodedMessage(
-                            data: data,
-                            status: .signatureInvalid(reason: error.localizedDescription))
-                    default:
-                        result = nil
-                    }
-                }
-                semaphore.signal()
+        // MailKit requires this method to be synchronous, but our GPG calls are
+        // async. `decodeCache` bridges the two: a detached Task does the work and
+        // this thread waits, on the decode of the same content already running if
+        // there is one. Mail's indexer often calls decodedMessage 10+ times for
+        // the same message; once a result is cached, those return instantly.
+        do {
+            return try decodeCache.decode(key: cacheKey) {
+                content.isEncrypted ? await Self.decrypt(data) : await Self.verify(data)
             }
-        } else {
-            // Encrypted (possibly also signed): decrypt.
-            Task.detached {
-                do {
-                    let (plaintext, rawStatus) = try await GPGService.shared.decrypt(data: data)
-                    log.debug("decodedMessage: decrypt succeeded")
-                    // Check against the envelope's From — that is the address
-                    // Mail displays, and therefore the claim being made.
-                    let status = Self.checkSignerMatchesSender(rawStatus, messageData: data)
-                    // Check for protected subject (RFC 3156 / Memory Hole):
-                    // if the outer subject is a placeholder like "..." and the
-                    // decrypted message has a real subject, show it via banner.
-                    let outerSubject = Self.headerValue("subject", in: data)
-                    let innerSubject = Self.headerValue("subject", in: plaintext)
-                    let banner: MEDecodedMessageBanner?
-                    if let inner = innerSubject,
-                       let outer = outerSubject,
-                       outer == "..." && inner != outer {
-                        banner = MEDecodedMessageBanner(
-                            title: "🔒 Subject: \(Self.decodeMIMEWords(inner))",
-                            primaryActionTitle: "",
-                            dismissable: false)
-                    } else {
-                        banner = nil
-                    }
-                    result = Self.makeDecodedMessage(data: plaintext, status: status, wasEncrypted: true, banner: banner)
-                } catch let error as NSError {
-                    Self.logNSError(error, prefix: "decodedMessage: decrypt error")
-                    // Return nil so Mail shows the raw message instead of crashing.
-                    // Returning a MEDecodedMessage with the original encrypted data
-                    // causes Mail's indexer to loop and trigger a KVO re-entrancy crash.
-                    result = nil
-                }
-                semaphore.signal()
+        } catch {
+            // Mail serializes decode requests, so a stuck operation (a wedged XPC
+            // call, gpg waiting on a pinentry that cannot be shown) must not hold
+            // up every message behind it. Mail shows the raw message; the decode
+            // carries on, and its result is cached for the next look.
+            log.error("decodedMessage: timed out — returning nil, the decode continues")
+            return nil
+        }
+    }
+
+    /// Signed only: extract the signed data and detached signature, then call
+    /// gpg --verify to check the signature.
+    private nonisolated static func verify(_ data: Data) async -> MEDecodedMessage? {
+        let (signedData, signatureData) = extractSignedParts(from: data)
+        guard let signedData, let signatureData else {
+            log.error("decodedMessage: could not extract signed parts from multipart/signed")
+            return nil
+        }
+        do {
+            log.debug("decodedMessage: verifying signature (\(signedData.count) data bytes, \(signatureData.count) sig bytes)")
+            let rawStatus = try await GPGService.shared.verify(data: signedData, signature: signatureData)
+            log.debug("decodedMessage: verify completed")
+            let status = checkSignerMatchesSender(rawStatus, messageData: data)
+            return makeDecodedMessage(data: data, status: status)
+        } catch let error as NSError {
+            logNSError(error, prefix: "decodedMessage: verify error")
+            switch GPGXPCError(nsError: error) {
+            case .gpgFailed:
+                return makeDecodedMessage(
+                    data: data,
+                    status: .signatureInvalid(reason: error.localizedDescription))
+            default:
+                return nil
             }
         }
+    }
 
-        semaphore.wait()
-
-        // Cache the decoded result so subsequent calls (Mail's indexer often
-        // calls decodedMessage 10+ times for the same message) return instantly.
-        if let decoded = result {
-            storeDecodedMessage(decoded, for: cacheKey)
-            log.debug("decodedMessage: cached result")
+    /// Encrypted (possibly also signed): decrypt.
+    private nonisolated static func decrypt(_ data: Data) async -> MEDecodedMessage? {
+        do {
+            let (plaintext, rawStatus) = try await GPGService.shared.decrypt(data: data)
+            log.debug("decodedMessage: decrypt succeeded")
+            // Check against the envelope's From — that is the address
+            // Mail displays, and therefore the claim being made.
+            let status = checkSignerMatchesSender(rawStatus, messageData: data)
+            // Check for protected subject (RFC 3156 / Memory Hole):
+            // if the outer subject is a placeholder like "..." and the
+            // decrypted message has a real subject, show it via banner.
+            let outerSubject = headerValue("subject", in: data)
+            let innerSubject = headerValue("subject", in: plaintext)
+            let banner: MEDecodedMessageBanner?
+            if let inner = innerSubject,
+               let outer = outerSubject,
+               outer == "..." && inner != outer {
+                banner = MEDecodedMessageBanner(
+                    title: "🔒 Subject: \(decodeMIMEWords(inner))",
+                    primaryActionTitle: "",
+                    dismissable: false)
+            } else {
+                banner = nil
+            }
+            return makeDecodedMessage(data: plaintext, status: status, wasEncrypted: true, banner: banner)
+        } catch let error as NSError {
+            logNSError(error, prefix: "decodedMessage: decrypt error")
+            // Return nil so Mail shows the raw message instead of crashing.
+            // Returning a MEDecodedMessage with the original encrypted data
+            // causes Mail's indexer to loop and trigger a KVO re-entrancy crash.
+            return nil
         }
-
-        return result
     }
 
     /// - Parameter wasEncrypted: `true` when returning decrypted plaintext,
@@ -866,7 +800,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         // Only the header block is decoded as text, to find the boundary.
         // Lenient: headers are ASCII by specification.
         // swiftlint:disable:next optional_data_string_conversion
-        let headerBlock = String(decoding: Self.headerBlock(in: data), as: UTF8.self)
+        let headerBlock = String(decoding: RawMessage.headerBlock(in: data), as: UTF8.self)
 
         var boundary: String? = nil
         if let s = headerBlock.range(of: "boundary=\""),
@@ -896,8 +830,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
         // The signature part: skip its headers, keep the armoured block.
         let sigPart = parts[2]
-        guard let sepRange = sigPart.range(of: Data("\r\n\r\n".utf8))
-                          ?? sigPart.range(of: Data("\n\n".utf8)) else {
+        guard let sepRange = RawMessage.endOfHeaders(in: sigPart) else {
             log.error("extractSignedParts: could not extract signature body")
             return (nil, nil)
         }

@@ -59,66 +59,48 @@ actor GPGService {
         }
     }
 
+    // MARK: - XPC calls
+
+    /// One XPC call whose await always finishes: the proxy is made per call, and
+    /// its error handler fails the call when NSXPC drops the reply block.
+    private func call<T: Sendable>(_ send: (GPGXPCProtocol, OneShotRelay<T>) -> Void) async throws -> T {
+        try await withXPCReply(proxy: connection.proxy(onError:), send)
+    }
+
     // MARK: - Diagnostics
 
     /// Calls the host app and returns its GPG version string.
     /// A successful result confirms the full XPC round-trip is working.
     func ping() async throws -> String {
-        let proxy = try connection.proxy()
-
-        // Save the existing availability callback so we can restore it after.
-        let savedHandler = connection.onAvailabilityChanged
-
-        // When XPC drops an in-flight reply block (connection invalidated before
-        // the host app replies), withCheckedThrowingContinuation leaks its
-        // continuation. Fix: hook into onAvailabilityChanged so that if the
-        // connection dies before the reply arrives, we resume with an error.
-        // OneShotRelay ensures only one resume regardless of which path fires first.
-        let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
-            let relay = OneShotRelay(continuation)
-
-            connection.onAvailabilityChanged = { [savedHandler] available in
-                savedHandler?(available)
-                if !available {
-                    relay.resume(throwing: GPGXPCError.make(.hostAppNotRunning,
-                        message: "MailGPG host app is not running. Please open it to enable GPG operations."))
-                }
-            }
-
+        let version: String = try await call { proxy, relay in
             proxy.ping { version, error in
                 if let error { relay.resume(throwing: error); return }
                 relay.resume(returning: version ?? "(no version returned)")
             }
         }
-
-        // Back on the actor's executor — restore the permanent handler and
-        // mark the host app as confirmed available.
-        connection.onAvailabilityChanged = savedHandler
         HostAppReachability.shared.isAvailable = true
-        return result
+        return version
     }
 
     /// Returns a full snapshot of the GPG environment on the host machine.
     func getSystemStatus() async throws -> SystemStatus {
-        let proxy = try connection.proxy()
-        return try await withCheckedThrowingContinuation { continuation in
+        try await call { proxy, relay in
             proxy.getSystemStatus { statusJSON, error in
-                if let error { continuation.resume(throwing: error); return }
+                if let error { relay.resume(throwing: error); return }
                 guard let statusJSON else {
-                    continuation.resume(throwing: GPGXPCError.make(.encodingFailed)); return
+                    relay.resume(throwing: GPGXPCError.make(.encodingFailed)); return
                 }
-                continuation.resume(with: statusJSON, as: SystemStatus.self)
+                relay.resume(with: statusJSON, as: SystemStatus.self)
             }
         }
     }
 
     /// Write `pinentry-mac` to `gpg-agent.conf` and restart the agent.
     func fixPinentry() async throws {
-        let proxy = try connection.proxy()
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        try await call { (proxy, relay: OneShotRelay<Void>) in
             proxy.fixPinentry { error in
-                if let error { continuation.resume(throwing: error); return }
-                continuation.resume()
+                if let error { relay.resume(throwing: error); return }
+                relay.resume(returning: ())
             }
         }
     }
@@ -126,22 +108,20 @@ actor GPGService {
     // MARK: - Outgoing
 
     func sign(data: Data, signerKeyID: String) async throws -> Data {
-        let proxy = try connection.proxy()
-        return try await withCheckedThrowingContinuation { continuation in
+        try await call { proxy, relay in
             proxy.sign(data: data, signerKeyID: signerKeyID) { result, error in
-                continuation.resume(with: result, error: error)
+                relay.resume(with: result, error: error)
             }
         }
     }
 
     func encrypt(data: Data, recipientFingerprints: [String],
                  hiddenRecipientFingerprints: [String] = []) async throws -> Data {
-        let proxy = try connection.proxy()
-        return try await withCheckedThrowingContinuation { continuation in
+        try await call { proxy, relay in
             proxy.encrypt(data: data,
                           recipientFingerprints: recipientFingerprints,
                           hiddenRecipientFingerprints: hiddenRecipientFingerprints) { result, error in
-                continuation.resume(with: result, error: error)
+                relay.resume(with: result, error: error)
             }
         }
     }
@@ -149,12 +129,11 @@ actor GPGService {
     func signAndEncrypt(data: Data, signerKeyID: String,
                         recipientFingerprints: [String],
                         hiddenRecipientFingerprints: [String] = []) async throws -> Data {
-        let proxy = try connection.proxy()
-        return try await withCheckedThrowingContinuation { continuation in
+        try await call { proxy, relay in
             proxy.signAndEncrypt(data: data, signerKeyID: signerKeyID,
                                  recipientFingerprints: recipientFingerprints,
                                  hiddenRecipientFingerprints: hiddenRecipientFingerprints) { result, error in
-                continuation.resume(with: result, error: error)
+                relay.resume(with: result, error: error)
             }
         }
     }
@@ -162,38 +141,36 @@ actor GPGService {
     // MARK: - Incoming
 
     func decrypt(data: Data) async throws -> (plaintext: Data, status: SecurityStatus) {
-        let proxy = try connection.proxy()
-        return try await withCheckedThrowingContinuation { continuation in
+        try await call { proxy, relay in
             proxy.decrypt(data: data) { plaintextData, statusJSON, error in
                 if let error {
-                    continuation.resume(throwing: error)
+                    relay.resume(throwing: error)
                     return
                 }
                 // Both values must be present on success.
                 guard let plaintextData, let statusJSON else {
-                    continuation.resume(throwing: GPGXPCError.make(.encodingFailed))
+                    relay.resume(throwing: GPGXPCError.make(.encodingFailed))
                     return
                 }
                 do {
                     let status = try xpcDecode(SecurityStatus.self, from: statusJSON)
-                    continuation.resume(returning: (plaintextData, status))
+                    relay.resume(returning: (plaintextData, status))
                 } catch {
-                    continuation.resume(throwing: error)
+                    relay.resume(throwing: error)
                 }
             }
         }
     }
 
     func verify(data: Data, signature: Data) async throws -> SecurityStatus {
-        let proxy = try connection.proxy()
-        return try await withCheckedThrowingContinuation { continuation in
+        try await call { proxy, relay in
             proxy.verify(data: data, signature: signature) { statusJSON, error in
-                if let error { continuation.resume(throwing: error); return }
+                if let error { relay.resume(throwing: error); return }
                 guard let statusJSON else {
-                    continuation.resume(throwing: GPGXPCError.make(.encodingFailed))
+                    relay.resume(throwing: GPGXPCError.make(.encodingFailed))
                     return
                 }
-                continuation.resume(with: statusJSON, as: SecurityStatus.self)
+                relay.resume(with: statusJSON, as: SecurityStatus.self)
             }
         }
     }
@@ -201,67 +178,62 @@ actor GPGService {
     // MARK: - Key management
 
     func lookupKey(email: String) async throws -> KeyInfo? {
-        let proxy = try connection.proxy()
-        return try await withCheckedThrowingContinuation { continuation in
+        try await call { proxy, relay in
             proxy.lookupKey(email: email) { keyInfoJSON, error in
-                if let error { continuation.resume(throwing: error); return }
+                if let error { relay.resume(throwing: error); return }
                 // nil data with no error means the key simply doesn't exist.
                 guard let keyInfoJSON else {
-                    continuation.resume(returning: Optional<KeyInfo>.none)
+                    relay.resume(returning: Optional<KeyInfo>.none)
                     return
                 }
                 do {
-                    continuation.resume(returning: try xpcDecode(KeyInfo.self, from: keyInfoJSON))
+                    relay.resume(returning: try xpcDecode(KeyInfo.self, from: keyInfoJSON))
                 } catch {
-                    continuation.resume(throwing: error)
+                    relay.resume(throwing: error)
                 }
             }
         }
     }
 
     func listSecretKeys() async throws -> [KeyInfo] {
-        let proxy = try connection.proxy()
-        return try await withCheckedThrowingContinuation { continuation in
+        try await call { proxy, relay in
             proxy.listSecretKeys { keyListJSON, error in
-                if let error { continuation.resume(throwing: error); return }
+                if let error { relay.resume(throwing: error); return }
                 guard let keyListJSON else {
-                    continuation.resume(returning: [])
+                    relay.resume(returning: [])
                     return
                 }
-                continuation.resume(with: keyListJSON, as: [KeyInfo].self)
+                relay.resume(with: keyListJSON, as: [KeyInfo].self)
             }
         }
     }
 
     func importKey(armoredKey: String) async throws -> KeyInfo {
-        let proxy = try connection.proxy()
-        return try await withCheckedThrowingContinuation { continuation in
+        try await call { proxy, relay in
             proxy.importKey(armoredKey: armoredKey) { keyInfoJSON, error in
-                if let error { continuation.resume(throwing: error); return }
+                if let error { relay.resume(throwing: error); return }
                 guard let keyInfoJSON else {
-                    continuation.resume(throwing: GPGXPCError.make(.encodingFailed))
+                    relay.resume(throwing: GPGXPCError.make(.encodingFailed))
                     return
                 }
-                continuation.resume(with: keyInfoJSON, as: KeyInfo.self)
+                relay.resume(with: keyInfoJSON, as: KeyInfo.self)
             }
         }
     }
 
     func importKeyData(_ keyData: Data) async throws -> KeyInfo {
-        let proxy = try connection.proxy()
-        let json: Data = try await withCheckedThrowingContinuation { continuation in
+        let json: Data = try await call { proxy, relay in
             proxy.importKeyData(keyData: keyData) { data, error in
-                continuation.resume(with: data, error: error)
+                relay.resume(with: data, error: error)
             }
         }
         return try xpcDecode(KeyInfo.self, from: json)
     }
 
     func exportPublicKey(fingerprint: String) async throws -> Data {
-        let proxy = try connection.proxy()
-        return try await withCheckedThrowingContinuation { continuation in
+        try await call { proxy, relay in
             proxy.exportPublicKey(fingerprint: fingerprint) { data, error in
-                continuation.resume(with: data, error: error)
+                relay.resume(with: data, error: error)
             }
         }
     }
@@ -278,45 +250,41 @@ actor GPGService {
     }
 
     func listPublicKeys() async throws -> [KeyInfo] {
-        let proxy = try connection.proxy()
-        return try await withCheckedThrowingContinuation { continuation in
+        try await call { proxy, relay in
             proxy.listPublicKeys { keyListJSON, error in
-                if let error { continuation.resume(throwing: error); return }
+                if let error { relay.resume(throwing: error); return }
                 guard let keyListJSON else {
-                    continuation.resume(returning: [])
+                    relay.resume(returning: [])
                     return
                 }
-                continuation.resume(with: keyListJSON, as: [KeyInfo].self)
+                relay.resume(with: keyListJSON, as: [KeyInfo].self)
             }
         }
     }
 
     func deleteKey(fingerprint: String) async throws {
-        let proxy = try connection.proxy()
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        try await call { (proxy, relay: OneShotRelay<Void>) in
             proxy.deleteKey(fingerprint: fingerprint) { error in
-                if let error { continuation.resume(throwing: error); return }
-                continuation.resume()
+                if let error { relay.resume(throwing: error); return }
+                relay.resume(returning: ())
             }
         }
     }
 
     func lsignKey(fingerprint: String) async throws {
-        let proxy = try connection.proxy()
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        try await call { (proxy, relay: OneShotRelay<Void>) in
             proxy.lsignKey(fingerprint: fingerprint) { error in
-                if let error { continuation.resume(throwing: error); return }
-                continuation.resume()
+                if let error { relay.resume(throwing: error); return }
+                relay.resume(returning: ())
             }
         }
     }
 
     func setTrust(fingerprint: String, level: TrustLevel) async throws {
-        let proxy = try connection.proxy()
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        try await call { (proxy, relay: OneShotRelay<Void>) in
             proxy.setTrust(fingerprint: fingerprint, level: level.rawValue) { error in
-                if let error { continuation.resume(throwing: error); return }
-                continuation.resume()
+                if let error { relay.resume(throwing: error); return }
+                relay.resume(returning: ())
             }
         }
     }
@@ -448,10 +416,10 @@ actor GPGService {
     }
 }
 
-// MARK: - Continuation helpers
+// MARK: - Relay helpers
 
-/// Makes resuming a continuation from an XPC reply block more concise.
-private extension CheckedContinuation where T == Data, E == Error {
+/// Makes resuming a relay from an XPC reply block more concise.
+private extension OneShotRelay where T == Data {
     func resume(with result: Data?, error: Error?) {
         if let error { resume(throwing: error); return }
         guard let result else { resume(throwing: GPGXPCError.make(.encodingFailed)); return }
@@ -459,43 +427,13 @@ private extension CheckedContinuation where T == Data, E == Error {
     }
 }
 
-private extension CheckedContinuation where E == Error, T: Decodable {
-    /// Decode JSON data and resume the continuation with the decoded value.
+private extension OneShotRelay where T: Decodable {
+    /// Decode JSON data and resume the relay with the decoded value.
     func resume(with data: Data, as type: T.Type) {
         do {
             resume(returning: try xpcDecode(type, from: data))
         } catch {
             resume(throwing: error)
         }
-    }
-}
-
-// MARK: - OneShotRelay
-
-/// Thread-safe wrapper around a CheckedContinuation that guarantees exactly
-/// one resume call even when two paths race (XPC reply vs. connection drop).
-/// Used exclusively by ping() to avoid continuation leaks when the host app
-/// is not running and XPC drops the reply block.
-private final class OneShotRelay<T: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var done = false
-    private let continuation: CheckedContinuation<T, Error>
-
-    init(_ continuation: CheckedContinuation<T, Error>) {
-        self.continuation = continuation
-    }
-
-    func resume(returning value: T) {
-        lock.lock(); defer { lock.unlock() }
-        guard !done else { return }
-        done = true
-        continuation.resume(returning: value)
-    }
-
-    func resume(throwing error: Error) {
-        lock.lock(); defer { lock.unlock() }
-        guard !done else { return }
-        done = true
-        continuation.resume(throwing: error)
     }
 }
