@@ -585,8 +585,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     /// Signed only: extract the signed data and detached signature, then call
     /// gpg --verify to check the signature.
     private nonisolated static func verify(_ data: Data) async -> MEDecodedMessage? {
-        let (signedData, signatureData) = extractSignedParts(from: data)
-        guard let signedData, let signatureData else {
+        guard let (signedData, signatureData) = RawMessage.signedParts(of: data) else {
             log.error("decodedMessage: could not extract signed parts from multipart/signed")
             return nil
         }
@@ -720,135 +719,6 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
             return MEDecodedMessage(data: data, securityInformation: securityInfo, context: context, banner: banner)
         }
         return MEDecodedMessage(data: data, securityInformation: securityInfo, context: context)
-    }
-
-    // MARK: - Multipart/signed parser
-
-    /// Extract the signed data (first MIME part) and detached PGP signature
-    /// (second MIME part) from a multipart/signed message.
-    ///
-    /// RFC 3156 §5: the first part is the signed content (must be passed to
-    /// gpg --verify byte-for-byte), and the second part is the detached signature.
-    // MARK: - Byte-level helpers for signature extraction
-
-    /// Split raw bytes on a byte sequence, the Data equivalent of
-    /// `components(separatedBy:)`.
-    private nonisolated static func split(_ data: Data, on separator: Data) -> [Data] {
-        guard !separator.isEmpty else { return [data] }
-        var parts: [Data] = []
-        var cursor = data.startIndex
-        while cursor <= data.endIndex,
-              let hit = data.range(of: separator, in: cursor..<data.endIndex) {
-            parts.append(Data(data[cursor..<hit.lowerBound]))
-            cursor = hit.upperBound
-        }
-        parts.append(Data(data[cursor...]))
-        return parts
-    }
-
-    /// Drop one leading and one trailing line break, CRLF or LF.
-    private nonisolated static func trimmingOuterLineBreaks(_ data: Data) -> Data {
-        let cr: UInt8 = 0x0D, lf: UInt8 = 0x0A
-        var slice = data[...]
-        if slice.first == cr, slice.dropFirst().first == lf {
-            slice = slice.dropFirst(2)
-        } else if slice.first == lf || slice.first == cr {
-            slice = slice.dropFirst()
-        }
-        if slice.last == lf, slice.dropLast().last == cr {
-            slice = slice.dropLast(2)
-        } else if slice.last == lf || slice.last == cr {
-            slice = slice.dropLast()
-        }
-        return Data(slice)
-    }
-
-    /// Canonical CRLF form, byte-wise.
-    private nonisolated static func normalizedToCRLF(_ data: Data) -> Data {
-        let cr: UInt8 = 0x0D, lf: UInt8 = 0x0A
-        var out = Data()
-        out.reserveCapacity(data.count + data.count / 8)
-        var index = data.startIndex
-        while index < data.endIndex {
-            let byte = data[index]
-            if byte == cr {
-                let next = data.index(after: index)
-                out.append(cr); out.append(lf)
-                index = (next < data.endIndex && data[next] == lf) ? data.index(after: next) : next
-            } else if byte == lf {
-                out.append(cr); out.append(lf)
-                index = data.index(after: index)
-            } else {
-                out.append(byte)
-                index = data.index(after: index)
-            }
-        }
-        return out
-    }
-
-    /// Pull the signed content and the detached signature out of a
-    /// multipart/signed message.
-    ///
-    /// Works entirely in bytes. The signed content is fed to `gpg --verify`, so
-    /// it has to be exactly the bytes the sender signed — and this ran through
-    /// a Swift String, which meant a message whose body is not UTF-8 either
-    /// bailed out with no verification at all, or, had the decode been made
-    /// lenient, would have had its bytes replaced and reported a valid
-    /// signature as invalid. A false alarm on a good signature is worse than
-    /// no verdict.
-    private nonisolated static func extractSignedParts(from data: Data) -> (signedData: Data?, signature: Data?) {
-        // Only the header block is decoded as text, to find the boundary.
-        // Lenient: headers are ASCII by specification.
-        // swiftlint:disable:next optional_data_string_conversion
-        let headerBlock = String(decoding: RawMessage.headerBlock(in: data), as: UTF8.self)
-
-        var boundary: String? = nil
-        if let s = headerBlock.range(of: "boundary=\""),
-           let e = headerBlock.range(of: "\"", range: s.upperBound..<headerBlock.endIndex) {
-            boundary = String(headerBlock[s.upperBound..<e.lowerBound])
-        } else if let s = headerBlock.range(of: "boundary=") {
-            let rest = String(headerBlock[s.upperBound...])
-            let end = rest.firstIndex(where: { ";,\r\n \t".contains($0) })
-            boundary = end.map { String(rest[..<$0]) } ?? rest
-        }
-
-        guard let b = boundary, !b.isEmpty else {
-            log.error("extractSignedParts: no boundary found")
-            return (nil, nil)
-        }
-
-        let parts = Self.split(data, on: Data(("--" + b).utf8))
-        // parts: [preamble, signed-part, signature-part, epilogue]
-        guard parts.count >= 3 else {
-            log.error("extractSignedParts: expected ≥3 parts, got \(parts.count)")
-            return (nil, nil)
-        }
-
-        // The signed data is the COMPLETE first MIME part including its headers
-        // but excluding the boundary lines and the line breaks around them.
-        let signedContent = Self.trimmingOuterLineBreaks(parts[1])
-
-        // The signature part: skip its headers, keep the armoured block.
-        let sigPart = parts[2]
-        guard let sepRange = RawMessage.endOfHeaders(in: sigPart) else {
-            log.error("extractSignedParts: could not extract signature body")
-            return (nil, nil)
-        }
-        // The armoured signature is ASCII; a stray byte makes gpg report the
-        // signature as bad rather than skipping verification.
-        // swiftlint:disable:next optional_data_string_conversion
-        let sigBody = String(decoding: sigPart[sepRange.upperBound...], as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sigBody.isEmpty else {
-            log.error("extractSignedParts: signature body is empty")
-            return (nil, nil)
-        }
-
-        // We sign the CRLF canonical form (RFC 3156 §5); stored messages often
-        // use LF, so normalise before verifying.
-        let crlfSigned = Self.normalizedToCRLF(signedContent)
-        log.debug("extractSignedParts: signed=\(crlfSigned.count) bytes (CRLF), sig=\(sigBody.count) chars")
-        return (crlfSigned, Data(sigBody.utf8))
     }
 
     // MARK: - UI

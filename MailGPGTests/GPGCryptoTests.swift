@@ -246,11 +246,12 @@ final class GPGCryptoTests: XCTestCase {
         XCTAssertTrue(signedStr.contains("-----BEGIN PGP SIGNATURE-----"), "Missing PGP signature block")
         XCTAssertTrue(signedStr.contains("Hello, MailGPG!"),            "Signed body is missing")
 
-        // Parse the multipart/signed MIME output and verify the signature is
-        // cryptographically valid — catches bugs where sign() produces a correct
-        // MIME structure but signs the wrong content or uses the wrong canonical form.
+        // Parse the multipart/signed MIME output the way the extension does
+        // and verify the signature is cryptographically valid — catches bugs
+        // where sign() produces a correct MIME structure but signs the wrong
+        // content or uses the wrong canonical form.
         let (signedContent, sigData) = try XCTUnwrap(
-            extractForVerify(from: signedStr),
+            RawMessage.signedParts(of: try XCTUnwrap(signed)),
             "Could not extract signed content and signature from MIME output")
 
         var verifyStatus: SecurityStatus?
@@ -267,42 +268,6 @@ final class GPGCryptoTests: XCTestCase {
             XCTFail("Expected .signed after verify, got \(vs)"); return
         }
         XCTAssertEqual(signers[0].email, homedir.email)
-    }
-
-    // MARK: - Helpers
-
-    /// Parse a multipart/signed MIME message and return the signed content
-    /// (in CRLF canonical form, which is what sign() actually signs) and the
-    /// detached PGP signature armor. Returns nil if the structure can't be parsed.
-    private func extractForVerify(from mimeStr: String) -> (data: Data, sig: Data)? {
-        guard let b0 = mimeStr.range(of: "boundary=\""),
-              let b1 = mimeStr.range(of: "\"", range: b0.upperBound..<mimeStr.endIndex)
-        else { return nil }
-        let delim = "--" + mimeStr[b0.upperBound..<b1.lowerBound]
-
-        let parts = mimeStr.components(separatedBy: delim)
-        // parts[0]=preamble+headers, parts[1]=signed-content, parts[2]=sig-part, parts[3]="--"
-        guard parts.count >= 3 else { return nil }
-
-        // Strip the leading \n (after --BOUNDARY) and trailing \n (before --BOUNDARY)
-        var content = parts[1]
-        if content.hasPrefix("\n") { content.removeFirst() }
-        if content.hasSuffix("\n") { content.removeLast() }
-
-        // sign() canonicalises to CRLF before signing (RFC 3156 §5)
-        let crlf = content
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\n",   with: "\r\n")
-
-        let sigPart = parts[2]
-        guard let s0 = sigPart.range(of: "-----BEGIN PGP SIGNATURE-----"),
-              let s1 = sigPart.range(of: "-----END PGP SIGNATURE-----")
-        else { return nil }
-        let armor = String(sigPart[s0.lowerBound..<s1.upperBound])
-
-        guard let dataBytes = crlf.data(using: .utf8),
-              let sigBytes  = armor.data(using: .utf8) else { return nil }
-        return (dataBytes, sigBytes)
     }
 
     // MARK: - Verify (detached signature)

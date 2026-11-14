@@ -117,4 +117,109 @@ final class RawMessageTests: XCTestCase {
             + "Send it as multipart/signed with application/pgp-signature.\r\n\r\nThanks\r\n"
         XCTAssertEqual(RawMessage.pgpContent(of: Data(message.utf8)), .init(isEncrypted: false, isSigned: false))
     }
+
+    // MARK: - Signed parts
+
+    private static let signedMessage = """
+    From: alice@example.com\r
+    Content-Type: multipart/signed; micalg=pgp-sha256;\r
+     protocol="application/pgp-signature"; boundary="b1"\r
+    \r
+    --b1\r
+    Content-Type: text/plain\r
+    \r
+    Hello, see --b1 here\r
+    --b1\r
+    Content-Type: application/pgp-signature\r
+    \r
+    -----BEGIN PGP SIGNATURE-----\r
+    iQ==\r
+    -----END PGP SIGNATURE-----\r
+    --b1--\r
+
+    """
+
+    func testSignedParts_standardMessage() throws {
+        // A boundary string in the middle of a line is text, not a delimiter.
+        let parts = try XCTUnwrap(RawMessage.signedParts(of: Data(Self.signedMessage.utf8)))
+        XCTAssertEqual(String(data: parts.signed, encoding: .utf8),
+                       "Content-Type: text/plain\r\n\r\nHello, see --b1 here")
+        XCTAssertEqual(String(data: parts.signature, encoding: .utf8),
+                       "-----BEGIN PGP SIGNATURE-----\r\niQ==\r\n-----END PGP SIGNATURE-----")
+    }
+
+    /// The bytes that are verified must be the part Mail displays. A boundary
+    /// taken from another header let a genuine signed part, hidden in the
+    /// preamble, vouch for the attacker's text that Mail shows.
+    func testSignedParts_boundaryComesFromContentTypeOnly() throws {
+        let message = """
+        From: alice@example.com
+        X-A: boundary="AAA"
+        Content-Type: multipart/signed; protocol="application/pgp-signature"; boundary="BBB"
+
+        --AAA
+        Content-Type: text/plain
+
+        Alice's real words
+        --AAA
+        Content-Type: application/pgp-signature
+
+        -----BEGIN PGP SIGNATURE-----
+        ALICE
+        -----END PGP SIGNATURE-----
+        --AAA--
+        --BBB
+        Content-Type: text/plain
+
+        Attacker's words
+        --BBB
+        Content-Type: application/pgp-signature
+
+        -----BEGIN PGP SIGNATURE-----
+        ALICE
+        -----END PGP SIGNATURE-----
+        --BBB--
+
+        """
+        let parts = try XCTUnwrap(RawMessage.signedParts(of: Data(message.utf8)))
+        let signed = String(data: parts.signed, encoding: .utf8) ?? ""
+        XCTAssertTrue(signed.contains("Attacker's words"), signed)
+        XCTAssertFalse(signed.contains("Alice's real words"), signed)
+    }
+
+    /// A reply quoting a clearsigned mail is not a multipart/signed message,
+    /// and must not get a verdict as one.
+    func testSignedParts_multipartAlternativeQuotingClearsignedText() {
+        let message = """
+        From: bob@example.com
+        Content-Type: multipart/alternative; boundary="alt"
+
+        --alt
+        Content-Type: text/plain
+
+        > -----BEGIN PGP SIGNED MESSAGE-----
+        > Hi
+        --alt
+        Content-Type: text/html
+
+        <p>Hi</p>
+        --alt--
+
+        """
+        XCTAssertNil(RawMessage.signedParts(of: Data(message.utf8)))
+    }
+
+    func testPGPContent_otherHeaderMentioningMultipartSignedIsNotSigned() {
+        let message = "From: a\nX-Note: multipart/signed; protocol=\"application/pgp-signature\"\n"
+            + "Content-Type: text/plain\n\nHello"
+        XCTAssertEqual(RawMessage.pgpContent(of: Data(message.utf8)), .init(isEncrypted: false, isSigned: false))
+    }
+
+    func testPGPContent_secondContentTypeIsNotTrusted() {
+        // Which of two Content-Type headers Mail uses is not ours to guess.
+        let message = "From: a\nContent-Type: text/plain\n"
+            + "Content-Type: multipart/signed; protocol=\"application/pgp-signature\"; boundary=\"b1\"\n\nHello"
+        XCTAssertEqual(RawMessage.pgpContent(of: Data(message.utf8)), .init(isEncrypted: false, isSigned: false))
+        XCTAssertNil(RawMessage.signedParts(of: Data(message.utf8)))
+    }
 }
