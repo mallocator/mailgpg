@@ -27,8 +27,17 @@ security find-identity -v -p codesigning || true
 
 # Prefer a Developer ID cert if you have one (needed only if you ever want to
 # hand the build to another machine); otherwise Apple Development is fine for
-# a Mac you build on yourself.
-if security find-identity -v -p codesigning | grep -q "Developer ID Application"; then
+# a Mac you build on yourself. Developer ID signing is manual and needs the
+# MailGPG_DeveloperID and MailGPGExtension_DeveloperID provisioning profiles;
+# with the certificate alone the build fails with "No profile ... matching",
+# so it is used only when both are installed.
+has_profile() {
+  grep -qs "<string>$1</string>" \
+    "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/"* \
+    "$HOME/Library/MobileDevice/Provisioning Profiles/"*
+}
+if security find-identity -v -p codesigning | grep -q "Developer ID Application" \
+   && has_profile MailGPG_DeveloperID && has_profile MailGPGExtension_DeveloperID; then
   SIGN_ARGS=(-configuration Release CODE_SIGN_STYLE=Manual \
              CODE_SIGN_IDENTITY="Developer ID Application")
   echo "Using: Developer ID Application"
