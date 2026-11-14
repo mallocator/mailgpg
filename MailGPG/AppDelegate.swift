@@ -39,9 +39,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Opening the app while the agent runs reaches the agent instead of
     /// starting a new copy. It hands over to a new copy in the user role, so
-    /// that copy can replace an agent started by a legacy plist.
+    /// that copy can replace an agent started by a legacy plist. Opening it
+    /// while a status window is up registers again in a fresh window, so a
+    /// window from an earlier run can't show an outdated result.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        guard serviceListener != nil else { return true }
+        guard serviceListener != nil else {
+            showStatusWindow()
+            return false
+        }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
@@ -52,18 +57,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    /// Only the copy the user opened quits with its window; the agent and a
+    /// test host keep running.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        serviceListener == nil
+        statusWindow != nil
     }
 
     private func showStatusWindow() {
-        let window = NSWindow(contentViewController: NSHostingController(rootView: HelperStatusView()))
-        window.title = "MailGPG"
-        window.styleMask = [.titled, .closable]
-        window.isReleasedWhenClosed = false
+        // The new window comes up before the old one closes, or closing the
+        // last window would quit the app.
+        let previous = statusWindow
+        let window = Self.makeStatusWindow(HelperStatusView())
         window.center()
         window.makeKeyAndOrderFront(nil)
         statusWindow = window
+        previous?.close()
         NSApp.activate()
+    }
+
+    /// A fixed-size window: the view sets its width, the content its height.
+    static func makeStatusWindow(_ view: HelperStatusView) -> NSWindow {
+        let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+        window.title = "MailGPG"
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        return window
     }
 }

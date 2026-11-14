@@ -9,8 +9,8 @@ GnuPG over XPC. README.md lists what the fork changes; SETUP.md the remaining fi
   from there).
 - Full suite (CI): `xcodebuild test -project MailGPG.xcodeproj -scheme MailGPG -destination 'platform=macOS'
   CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO`.
-- Build and install on the owner's Mac: `./build.sh` (`--test` runs the tests too); it signs with his team and
-  replaces /Applications/MailGPG.app: only when he asks.
+- Build and install on the owner's Mac: `./build.sh` (`--test` runs the tests first and installs only if they
+  pass); it signs with his team and replaces /Applications/MailGPG.app: only when he asks.
 - Release: a `vX.Y.Z` tag builds and publishes: only with the owner's OK.
 
 ## Differences from the global standards

@@ -5,8 +5,10 @@ set -euo pipefail
 
 TEAM_ID="3HKD37M482"
 LAUNCH_LABEL="net.pyxzl.mailgpg"
+BUNDLE_ID="net.pyxzl.MailGPG"
 APP_PATH="/Applications/MailGPG.app"
 DERIVED="$(mktemp -d)"
+trap 'rm -rf "$DERIVED"' EXIT
 REPO="$(cd "$(dirname "$0")" && pwd)"
 # The log lands in the repo rather than a temp dir so it can be read from
 # anywhere with access to this folder — including a session that has no Xcode.
@@ -104,20 +106,6 @@ fi
 echo "Team ID check: signed by $ACTUAL_TEAM, pinned $PINNED_TEAM — match"
 codesign -d --entitlements - "$BUILT" 2>/dev/null | head -20 || true
 
-say "Installing to $APP_PATH"
-launchctl bootout "gui/$UID/$LAUNCH_LABEL" 2>/dev/null || true
-rm -rf "$APP_PATH"
-cp -R "$BUILT" "$APP_PATH"
-
-# Opening the app registers its bundled launch agent with SMAppService and
-# shows whether that worked; launchd then starts the helper. It also removes
-# the ~/Library/LaunchAgents plist older builds wrote.
-say "Registering the helper"
-open "$APP_PATH"
-sleep 3
-launchctl print "gui/$UID/$LAUNCH_LABEL" | grep -E "state|pid" \
-  || echo "Helper not running yet: see the MailGPG window."
-
 if [ "$RUN_TESTS" = "1" ]; then
   say "Running tests"
   set +e
@@ -133,13 +121,29 @@ if [ "$RUN_TESTS" = "1" ]; then
   grep -E "^Test Suite .* (passed|failed)|error:|XCTAssert.* failed" "$REPO/test-last.log" \
     | sort -u | head -40 || true
   if [ $TEST_STATUS -ne 0 ]; then
-    echo "Tests FAILED — full log: $REPO/test-last.log"
-  else
-    echo "Tests passed — full log: $REPO/test-last.log"
+    echo "Tests FAILED, nothing installed — full log: $REPO/test-last.log"
+    exit 1
   fi
+  echo "Tests passed — full log: $REPO/test-last.log"
 fi
 
-rm -rf "$DERIVED"
+say "Installing to $APP_PATH"
+launchctl bootout "gui/$UID/$LAUNCH_LABEL" 2>/dev/null || true
+# A status window from an earlier run would otherwise take the `open` below
+# and keep showing that run's result.
+osascript -e "if application id \"$BUNDLE_ID\" is running then tell application id \"$BUNDLE_ID\" to quit" \
+  2>/dev/null || true
+rm -rf "$APP_PATH"
+cp -R "$BUILT" "$APP_PATH"
+
+# Opening the app registers its bundled launch agent with SMAppService and
+# shows whether that worked; launchd then starts the helper. It also removes
+# the ~/Library/LaunchAgents plist older builds wrote.
+say "Registering the helper"
+open "$APP_PATH"
+sleep 3
+launchctl print "gui/$UID/$LAUNCH_LABEL" | grep -E "state|pid" \
+  || echo "Helper not running yet: see the MailGPG window."
 
 say "Done"
 cat <<'NEXT'

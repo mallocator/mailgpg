@@ -60,6 +60,54 @@ final class HelperRegistrationTests: XCTestCase {
                        [.removeLegacyPlist, .bootOut])
     }
 
+    // MARK: - Outcome
+
+    func testEnabledAndRunning_isRunning() {
+        XCTAssertEqual(HelperRegistration.outcome(status: .enabled, jobRunning: true), .running)
+    }
+
+    func testEnabledButNotRunning_isNotReportedAsRunning() {
+        // Registered with SMAppService, but launchd has not started the job.
+        XCTAssertEqual(HelperRegistration.outcome(status: .enabled, jobRunning: false), .notRunning)
+    }
+
+    func testSwitchedOff_needsApproval() {
+        XCTAssertEqual(HelperRegistration.outcome(status: .requiresApproval, jobRunning: false), .requiresApproval)
+        // A job left by a legacy plist does not make it registered.
+        XCTAssertEqual(HelperRegistration.outcome(status: .requiresApproval, jobRunning: true), .requiresApproval)
+    }
+
+    func testNotRegistered_failed() {
+        XCTAssertEqual(HelperRegistration.outcome(status: .notRegistered, jobRunning: true), .failed)
+        XCTAssertEqual(HelperRegistration.outcome(status: .notFound, jobRunning: false), .failed)
+    }
+
+    func testJobRunning_readsThePIDFromLaunchctlPrint() {
+        let running = """
+            gui/501/net.pyxzl.mailgpg = {
+            \tactive count = 1
+            \tstate = running
+            \tprogram identifier = Contents/MacOS/MailGPG (mode: 2)
+            \tpid = 4242
+            \timmediate reason = speculative
+            }
+            """
+        XCTAssertTrue(HelperRegistration.jobRunning(launchctlPrint: running))
+    }
+
+    func testJobRunning_loadedWithoutPID_isNotRunning() {
+        let waiting = """
+            gui/501/net.pyxzl.mailgpg = {
+            \tactive count = 0
+            \tstate = not running
+            \tlast exit code = 78: EX_CONFIG
+            \tparent pid = 1
+            }
+            """
+        XCTAssertFalse(HelperRegistration.jobRunning(launchctlPrint: waiting))
+        XCTAssertFalse(HelperRegistration.jobRunning(launchctlPrint: ""))
+    }
+
     // MARK: - Bundled plist
 
     func testBundledPlist_runsTheAppFromItsBundle() throws {

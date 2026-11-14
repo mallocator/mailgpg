@@ -16,11 +16,19 @@ cask "mailgpg-nodeps" do
   app "MailGPG.app"
 
   # MailGPG.app registers its helper with launchd itself when it is opened.
-  # This stops it and removes the plist older versions of this cask wrote.
-  uninstall_preflight_steps do
-    run "/bin/launchctl", args: ["remove", "net.pyxzl.mailgpg"], must_succeed: false, print_stderr: false
-    remove "Library/LaunchAgents/net.pyxzl.mailgpg.plist", base: :home
-  end
+  # `launchctl` stops the helper, also on upgrade, and deletes the
+  # ~/Library/LaunchAgents plist older versions of this cask wrote; it runs
+  # outside Homebrew's sandbox. `quit` closes an open status window, which
+  # an upgrade reopens, registering the new helper.
+  uninstall launchctl: "net.pyxzl.mailgpg",
+            quit:      "net.pyxzl.MailGPG"
+
+  zap trash: [
+    "~/Library/Containers/net.pyxzl.MailGPG.MailGPGExtension",
+    "~/Library/Group Containers/group.net.pyxzl.mailgpg",
+    "~/Library/Preferences/net.pyxzl.MailGPG.plist",
+    "~/Library/Saved Application State/net.pyxzl.MailGPG.savedState",
+  ]
 
   caveats <<~EOS
     This cask does not install `gnupg` or `pinentry-mac`.

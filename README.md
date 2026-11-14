@@ -35,7 +35,11 @@ macOS asks, allow it in System Settings → General → Login Items.
 open /Applications/MailGPG.app
 ```
 
-`brew uninstall --cask mailgpg` stops the helper and removes it.
+`brew uninstall --cask mailgpg` stops the helper and deletes the app. A
+MailGPG entry can stay under Login Items until macOS notices the app is gone;
+with the app deleted it starts nothing. `brew uninstall --zap --cask mailgpg`
+also deletes the settings and pinned keys MailGPG keeps in `~/Library`; your
+GnuPG keyring stays.
 
 To build it yourself instead, see [SETUP.md](SETUP.md) — it needs Xcode and an
 Apple Developer account, and `./build.sh` does the rest.

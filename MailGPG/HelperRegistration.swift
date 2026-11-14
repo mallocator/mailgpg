@@ -79,17 +79,49 @@ enum HelperRegistration {
         }
     }
 
+    // MARK: - Outcome
+
+    /// What the status window says after registering.
+    enum Outcome: Equatable {
+        case running
+        /// Registered, but launchd has not started the job.
+        case notRunning
+        /// Switched off in Login Items.
+        case requiresApproval
+        case failed
+    }
+
+    /// `SMAppService` reports `.enabled` for a registration whose job launchd
+    /// has not loaded or started, so the window asks launchd as well.
+    static func outcome(status: SMAppService.Status, jobRunning: Bool) -> Outcome {
+        switch status {
+        case .enabled: return jobRunning ? .running : .notRunning
+        case .requiresApproval: return .requiresApproval
+        default: return .failed
+        }
+    }
+
+    /// `launchctl print` lists a `pid = …` line only while the job runs; a
+    /// stopped one shows `parent pid` and its last exit code instead.
+    static func jobRunning(launchctlPrint output: String) -> Bool {
+        output.split(separator: "\n").contains { line in
+            line.trimmingCharacters(in: .whitespaces).hasPrefix("pid = ")
+        }
+    }
+
     // MARK: - Running them
 
-    /// Brings the registration to the state `steps` describes and returns the
-    /// status afterwards, with the error of a failed `register()`, if any.
-    static func ensureRegistered() async -> (status: SMAppService.Status, error: String?) {
+    private static var serviceTarget: String { "gui/\(getuid())/\(label)" }
+
+    /// Brings the registration to the state `steps` describes and returns
+    /// what came of it, with the error of a failed `register()`, if any.
+    static func ensureRegistered() async -> (outcome: Outcome, error: String?) {
         let fileManager = FileManager.default
         let before = service.status
         let plan = steps(
             legacyPlistExists: fileManager.fileExists(atPath: legacyPlistURL.path),
             status: before,
-            jobLoaded: launchctl("print", "gui/\(getuid())/\(label)"))
+            jobLoaded: launchctl("print", serviceTarget) != nil)
         log.info("helper registration: status=\(String(describing: before), privacy: .public) steps=\(String(describing: plan), privacy: .public)")
 
         var registerError: String?
@@ -102,7 +134,7 @@ enum HelperRegistration {
                     log.error("could not remove \(legacyPlistURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 }
             case .bootOut:
-                _ = launchctl("bootout", "gui/\(getuid())/\(label)")
+                launchctl("bootout", serviceTarget)
             case .unregister:
                 do {
                     try await service.unregister()
@@ -121,24 +153,40 @@ enum HelperRegistration {
             }
         }
         let status = service.status
-        return (status, status == .enabled ? nil : registerError)
+        let result = outcome(status: status, jobRunning: status == .enabled ? await waitForJob() : false)
+        return (result, status == .enabled ? nil : registerError)
     }
 
-    /// Runs `/bin/launchctl` with its output discarded; `true` on exit status 0.
-    private static func launchctl(_ arguments: String...) -> Bool {
+    /// launchd starts a freshly registered job shortly after `register()`
+    /// returns; gives it up to three seconds.
+    private static func waitForJob() async -> Bool {
+        for attempt in 0..<6 {
+            if attempt > 0 { try? await Task.sleep(for: .milliseconds(500)) }
+            if let output = launchctl("print", serviceTarget), jobRunning(launchctlPrint: output) { return true }
+        }
+        return false
+    }
+
+    /// Runs `/bin/launchctl`; its output on exit status 0, otherwise `nil`.
+    @discardableResult
+    private static func launchctl(_ arguments: String...) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         process.arguments = arguments
-        process.standardOutput = FileHandle.nullDevice
+        let pipe = Pipe()
+        process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         do {
             try process.run()
         } catch {
             log.error("launchctl \(arguments.joined(separator: " "), privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return false
+            return nil
         }
+        // Read before waiting: a full pipe would block launchctl.
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        return process.terminationStatus == 0
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8) ?? ""
     }
 }
 
