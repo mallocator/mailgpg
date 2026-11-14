@@ -467,6 +467,20 @@ final class MIMEHelpersTests: XCTestCase {
         XCTAssertFalse(outer.contains("Quarterly numbers"))
     }
 
+    func testProtectedSubject_signOnlyKeepsTheSubject() {
+        // A signed-only message has no encrypted entity to carry the real
+        // subject, so replacing the visible one would lose it.
+        let svc = GPGServiceImpl(protectSubject: true)
+        let original = "Subject: Invoice\nContent-Type: text/plain; charset=utf-8\n\nHi".data(using: .utf8)!
+        let (headers, body) = svc.splitMessage(original)
+        let signed = String(data: svc.buildSignedMessage(original: original,
+                                                         signedPart: svc.buildSignedPart(rawHeaders: headers, body: body),
+                                                         signature: Data("SIG".utf8)),
+                            encoding: .utf8) ?? ""
+        XCTAssertTrue(signed.contains("Subject: Invoice"), signed)
+        XCTAssertFalse(signed.contains("Subject: ..."), signed)
+    }
+
     // MARK: - buildInnerMIMEEntity
 
     func testBuildInnerMIMEEntity_basic() {

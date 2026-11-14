@@ -237,12 +237,8 @@ extension GPGServiceImpl {
         headers = removeHeader("x-mailgpg-sign",      from: headers)
         headers = removeHeader("x-mailgpg-encrypt",   from: headers)
         headers = removeHeader("x-mailgpg-sessionid", from: headers)
-        // The real Subject is inside the encrypted entity; replace the visible
-        // one with the placeholder our own decoder (and Thunderbird's, and
-        // Proton's) recognises. Only when there was a Subject to protect.
-        if protectSubject, foldedHeaderValue("subject", in: headers) != nil {
-            headers = setHeader("Subject", to: "...", in: headers)
-        }
+        // The Subject stays visible even with protectSubject on: a signed-only
+        // message has no encrypted entity to carry the real one.
         if foldedHeaderValue("mime-version", in: headers) == nil {
             headers += eol + "MIME-Version: 1.0"
         }
