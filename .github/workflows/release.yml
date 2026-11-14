@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     name: Build, Sign & Notarize
-    runs-on: macos-15
+    runs-on: macos-26
     permissions:
       contents: write
 
@@ -17,8 +17,10 @@ jobs:
         uses: actions/checkout@v4
 
       # ── Xcode ────────────────────────────────────────────────────────────────
+      # The project's settings (default MainActor isolation, approachable
+      # concurrency) need Xcode 26; 26.6 is the version it was last upgraded to.
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.app
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app
 
       # ── Signing certificate ──────────────────────────────────────────────────
       # Imports the Developer ID Application certificate from the base64-encoded
@@ -55,20 +57,21 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "BUILD_NUMBER=$GITHUB_RUN_NUMBER" >> $GITHUB_ENV
 
-      # ── Archive ──────────────────────────────────────────────────────────────
       # ── Provisioning profiles ─────────────────────────────────────────────────
       # Developer ID provisioning profiles are required for both targets because
       # they use the App Groups capability. Downloaded from the Apple Developer
-      # portal and stored as base64-encoded GitHub secrets.
+      # portal and stored as base64-encoded GitHub secrets. Xcode 16 and later
+      # read profiles from this folder; the Release configuration names them.
       - name: Install provisioning profiles
         run: |
-          PP_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          PP_DIR="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
           mkdir -p "$PP_DIR"
           echo "${{ secrets.PROVISIONING_PROFILE_HOST_BASE64 }}" \
             | base64 --decode -o "$PP_DIR/MailGPG_DeveloperID.provisionprofile"
           echo "${{ secrets.PROVISIONING_PROFILE_EXTENSION_BASE64 }}" \
             | base64 --decode -o "$PP_DIR/MailGPGExtension_DeveloperID.provisionprofile"
 
+      # ── Archive ──────────────────────────────────────────────────────────────
       - name: Archive
         run: |
           xcodebuild archive \
@@ -83,8 +86,6 @@ jobs:
             DEVELOPMENT_TEAM="${{ secrets.DEVELOPMENT_TEAM }}" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Developer ID Application" \
-            PROVISIONING_PROFILE_SPECIFIER_MailGPG="MailGPG_DeveloperID" \
-            PROVISIONING_PROFILE_SPECIFIER_MailGPGExtension="MailGPGExtension_DeveloperID" \
             OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/signing.keychain-db" \
             2>&1 | tee /tmp/xcodebuild.log | grep -E "error:|ARCHIVE"
           if grep -q "ARCHIVE FAILED" /tmp/xcodebuild.log; then
@@ -125,7 +126,7 @@ jobs:
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
             ARCHS="arm64 x86_64" \
             ONLY_ACTIVE_ARCH=NO \
-            | xcpretty
+            | xcbeautify
 
       - name: Verify universal binaries
         run: |
@@ -143,6 +144,25 @@ jobs:
           [[ "$APP_ARCHS" == *arm64* && "$APP_ARCHS" == *x86_64* ]]
           [[ "$EXT_ARCHS" == *arm64* && "$EXT_ARCHS" == *x86_64* ]]
 
+      # ── Notarize and staple the app ──────────────────────────────────────────
+      # Homebrew copies the app out of the DMG, so the app itself carries the
+      # ticket; Gatekeeper then verifies it on first launch without going online.
+      # Uses an app-specific password (not your Apple ID password).
+      # Generate one at: https://appleid.apple.com → App-Specific Passwords
+      - name: Notarize app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
+          DEVELOPMENT_TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
+        run: |
+          ditto -c -k --keepParent "$RUNNER_TEMP/export/MailGPG.app" "$RUNNER_TEMP/MailGPG.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/MailGPG.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$NOTARIZATION_PASSWORD" \
+            --team-id "$DEVELOPMENT_TEAM" \
+            --wait
+          xcrun stapler staple "$RUNNER_TEMP/export/MailGPG.app"
+
       # ── DMG ──────────────────────────────────────────────────────────────────
       - name: Create DMG
         run: |
@@ -152,11 +172,10 @@ jobs:
             -ov -format UDZO \
             "$RUNNER_TEMP/MailGPG-$VERSION.dmg"
 
-      # ── Notarize ─────────────────────────────────────────────────────────────
-      # Submits the DMG to Apple's notary service and waits for the result.
-      # Uses an app-specific password (not your Apple ID password).
-      # Generate one at: https://appleid.apple.com → App-Specific Passwords
-      - name: Notarize
+      # ── Notarize and staple the DMG ──────────────────────────────────────────
+      # The DMG gets its own ticket so opening the download also passes
+      # Gatekeeper offline.
+      - name: Notarize DMG
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
@@ -167,12 +186,7 @@ jobs:
             --password "$NOTARIZATION_PASSWORD" \
             --team-id "$DEVELOPMENT_TEAM" \
             --wait
-
-      # ── Staple ───────────────────────────────────────────────────────────────
-      # Attaches the notarization ticket to the DMG so Gatekeeper can verify
-      # it offline (without contacting Apple's servers on user's machine).
-      - name: Staple
-        run: xcrun stapler staple "$RUNNER_TEMP/MailGPG-$VERSION.dmg"
+          xcrun stapler staple "$RUNNER_TEMP/MailGPG-$VERSION.dmg"
 
       # ── SHA256 ───────────────────────────────────────────────────────────────
       - name: Compute SHA256
