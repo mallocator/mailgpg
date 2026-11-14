@@ -217,4 +217,42 @@ final class GPGKeyManagementTests: XCTestCase {
         }
         assertEncodingFailed(error)
     }
+
+    // MARK: - Resolve by address
+
+    /// Add a key with the single user ID `uid` to the test homedir.
+    private func addKey(uid: String) throws {
+        let (_, stderr, code) = try homedir.run(
+            ["--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+             "--quick-gen-key", uid, "ed25519", "sign", "never"])
+        XCTAssertEqual(code, 0, "Key generation failed: \(stderr)")
+    }
+
+    /// What step 1 of `resolveKey` gets from gpg when it searches for `email`.
+    private func localListing(_ email: String) throws -> [KeyInfo] {
+        let (out, _, _) = try homedir.run(["--list-keys", "--with-colons", "--fixed-list-mode", email])
+        return svc.parseColonOutput(String(data: out, encoding: .utf8) ?? "", wantSecretKeys: false)
+    }
+
+    func testUsableKey_ignoresSubstringMatch() throws {
+        // gpg matches a bare address as a substring of the user ID, so its
+        // listing for bob holds Mallory's key.
+        try addKey(uid: "Mallory <notbob@example.com>")
+        let listing = try localListing("bob@example.com")
+        XCTAssertEqual(listing.map(\.emails), [["notbob@example.com"]])
+        XCTAssertNil(svc.usableKey(for: "bob@example.com", in: listing))
+    }
+
+    func testUsableKey_picksTheKeyCarryingTheAddress() throws {
+        try addKey(uid: "Mallory <notbob@example.com>")
+        try addKey(uid: "Bob <bob@example.com>")
+        let key = svc.usableKey(for: "Bob@Example.com", in: try localListing("bob@example.com"))
+        XCTAssertEqual(key?.emails, ["bob@example.com"])
+    }
+
+    func testResolveKey_findsBareAddressKeyLocally() throws {
+        try addKey(uid: "bare@example.com")
+        let key = try svc.resolveKey(email: "bare@example.com")
+        XCTAssertEqual(key?.email, "bare@example.com")
+    }
 }

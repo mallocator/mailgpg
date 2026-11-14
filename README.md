@@ -158,8 +158,10 @@ Security fixes: the XPC gate is pinned to the signing team, so a local process
 can no longer claim the extension's bundle identifier and use the helper as a
 signing and decryption oracle; GPG status is parsed from a private file rather
 than stderr, which carries attacker-chosen user IDs; recipient keys are pinned
-on first use so a substituted key stops the send; signatures whose key doesn't
-match the From address are reported as invalid; revoked and expired signing
+on first use so a substituted key stops the send; a recipient's key must carry
+their exact address, where gpg's own lookup also returns
+`Mallory <notbob@example.com>` for bob@example.com; signatures whose key doesn't
+carry the From address are reported as invalid; revoked and expired signing
 keys say so instead of reading as "no signature"; BCC recipients are encrypted
 to as hidden recipients rather than being disclosed to everyone.
 

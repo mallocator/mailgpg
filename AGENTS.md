@@ -21,5 +21,3 @@ GnuPG over XPC. README.md lists what the fork changes; SETUP.md the remaining fi
 ## Rules
 - Lenient UTF-8 decodes of headers and armour are deliberate; each `swiftlint:disable:next
   optional_data_string_conversion` says why. Strict decodes everywhere else.
-- Known failing test: `ParsingTests.testRealGPG_decryptWithEmbeddedSignature` (parseUID returns an empty email for
-  a bare-email user ID, 2026-11-10). Fix it starting from that test.

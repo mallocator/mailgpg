@@ -400,7 +400,7 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
             // GPG only returns the decrypted payload bytes; we must reconstruct
             // the full message from the outer envelope headers.
             let reconstructed = reconstructDecryptedMessage(original: data, plaintext: plaintext)
-            reply(reconstructed, try xpcEncode(enrichWithTrust(status)), nil)
+            reply(reconstructed, try xpcEncode(enrichFromKeyring(status)), nil)
         } catch {
             reply(nil, nil, error as NSError)
         }
@@ -427,7 +427,7 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
             let (_, _, statusText, _) = try gpgWithStatus(
                 ["--verify", "--batch", sigURL.path, "-"],
                 input: data)
-            let status = enrichWithTrust(parseVerifyStatus(status: statusText))
+            let status = enrichFromKeyring(parseVerifyStatus(status: statusText))
             reply(try xpcEncode(status), nil)
         } catch {
             reply(nil, GPGXPCError.make(.gpgFailed, message: error.localizedDescription))

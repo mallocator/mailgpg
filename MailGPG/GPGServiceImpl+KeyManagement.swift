@@ -32,34 +32,13 @@ extension GPGServiceImpl {
     /// Returns the best usable key found, or `nil` if none was found.
     /// Keys are auto-imported by GPG on steps 2–4.
     func resolveKey(email: String? = nil, keyID: String? = nil) throws -> KeyInfo? {
-        // The parser emits one KeyInfo per user ID, and GPG lists user IDs
-        // newest-first rather than primary-first — so "the first entry" is an
-        // arbitrary address off the key. When we searched for an address,
-        // return the entry carrying THAT address, so a recipient reached at a
-        // key's second or third identity is reported under the address the
-        // caller asked about instead of under whichever identity happened to
-        // be added last.
-        func firstUsable(_ keys: [KeyInfo]) -> KeyInfo? {
-            let wanted = email?.lowercased()
-            func pick(_ candidates: [KeyInfo]) -> KeyInfo? {
-                if let wanted {
-                    if let exact = candidates.first(where: { $0.emails.contains(wanted) }) {
-                        return exact
-                    }
-                }
-                return candidates.first
-            }
-            let live = keys.filter { !$0.isRevoked && ($0.expiresAt.map { $0 > Date() } ?? true) }
-            return pick(live) ?? pick(keys.filter { !$0.isRevoked })
-        }
-
         let keyservers = currentKeyservers()
 
         if let email {
             // ── Step 1: local keyring by email ───────────────────────────
             let (localOut, _, localCode) = try gpg(
                 ["--list-keys", "--with-colons", "--fixed-list-mode", email])
-            if localCode == 0, let key = firstUsable(
+            if localCode == 0, let key = usableKey(for: email, in:
                 parseColonOutput(String(data: localOut, encoding: .utf8) ?? "", wantSecretKeys: false)) {
                 return key
             }
@@ -78,7 +57,7 @@ extension GPGServiceImpl {
                 "--with-colons", "--fixed-list-mode",
                 email
             ])
-            if wkdCode == 0, var key = firstUsable(
+            if wkdCode == 0, var key = usableKey(for: email, in:
                 parseColonOutput(String(data: wkdOut, encoding: .utf8) ?? "", wantSecretKeys: false)) {
                 key.viaWKD = true
                 log.info("resolveKey: found via WKD")
@@ -98,7 +77,7 @@ extension GPGServiceImpl {
                     "--with-colons", "--fixed-list-mode",
                     email
                 ])
-                guard code == 0, let key = firstUsable(
+                guard code == 0, let key = usableKey(for: email, in:
                     parseColonOutput(String(data: out, encoding: .utf8) ?? "", wantSecretKeys: false))
                 else { continue }
                 return key
@@ -123,6 +102,18 @@ extension GPGServiceImpl {
         }
 
         return nil
+    }
+
+    /// The key for `email` out of a gpg listing searched by that address.
+    ///
+    /// gpg matches a bare address as a substring of the user ID, so the
+    /// listing for bob@example.com also holds `Mallory <notbob@example.com>`.
+    /// Only a key carrying the address itself as a live user ID qualifies —
+    /// primary or not — and an unexpired one wins over an expired one.
+    func usableKey(for email: String, in keys: [KeyInfo]) -> KeyInfo? {
+        let wanted = email.lowercased()
+        let carrying = keys.filter { !$0.isRevoked && $0.emails.contains(wanted) }
+        return carrying.first { $0.expiresAt.map { $0 > Date() } ?? true } ?? carrying.first
     }
 
     func listSecretKeys(reply: @escaping (Data?, Error?) -> Void) {

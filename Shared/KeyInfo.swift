@@ -49,9 +49,9 @@ struct KeyInfo: Codable, Identifiable, Equatable {
     /// Every non-revoked address on this key, lowercased.
     ///
     /// A key routinely carries several user IDs: a work address, a personal
-    /// one, an old one. Matching only `email` matched whichever GPG happened to
-    /// list first, which is the most recently added, so a correspondent reached
-    /// at any other address on their own key looked like they had no key.
+    /// one, an old one. Matching only `email` matched the one GPG lists first,
+    /// the primary user ID, so a correspondent reached at any other address on
+    /// their own key looked like they had no key.
     var emails: [String] = []
 
     /// True when this key was found through Web Key Directory — served over

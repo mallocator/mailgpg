@@ -333,10 +333,43 @@ final class GPGCryptoTests: XCTestCase {
         }
         XCTAssertEqual(signers.count, 1)
         // GPG2 reports the SIGNING-SUBKEY fingerprint in VALIDSIG, not the primary key.
-        // Confirm the signer belongs to our test key via email, and that enrichWithTrust
+        // Confirm the signer belongs to our test key via email, and that enrichFromKeyring
         // could look it up (trustLevel != .unknown means the key was found in the homedir).
         XCTAssertEqual(signers[0].email, homedir.email)
         XCTAssertFalse(signers[0].fingerprint.isEmpty)
+    }
+
+    func testVerifySignerCarriesSecondaryAddress() throws {
+        // GOODSIG names the primary user ID even when the message was signed
+        // for another address on the key, so the From check needs the rest.
+        let fp = homedir.fingerprint
+        let second = "second@example.com"
+        for args in [["--quick-add-uid", fp, "Second <\(second)>"],
+                     ["--quick-set-primary-uid", fp, "MailGPG Test <\(homedir.email)>"]] {
+            let (_, stderr, code) = try homedir.run(["--batch"] + args)
+            XCTAssertEqual(code, 0, "\(args[0]) failed: \(stderr)")
+        }
+        let plainData = Data("Hello, MailGPG!".utf8)
+        let (sigData, signErr, signCode) = try homedir.run(
+            ["--detach-sign", "--armor", "--batch", "--yes", "--local-user", fp, "--sender", second],
+            input: plainData)
+        XCTAssertEqual(signCode, 0, "Direct GPG sign failed: \(signErr)")
+
+        var status: SecurityStatus?
+        let sem = DispatchSemaphore(value: 0)
+        svc.verify(data: plainData, signature: sigData) { statusData, _ in
+            status = statusData.flatMap { try? xpcDecode(SecurityStatus.self, from: $0) }
+            sem.signal()
+        }
+        sem.wait()
+
+        guard case .signed(let signers) = try XCTUnwrap(status), let signer = signers.first else {
+            return XCTFail("Expected .signed, got \(String(describing: status))")
+        }
+        XCTAssertEqual(signer.email, homedir.email)
+        XCTAssertTrue(signer.hasAddress("Second@Example.com"), "addresses: \(signer.emails)")
+        XCTAssertTrue(signer.hasAddress(homedir.email))
+        XCTAssertFalse(signer.hasAddress("other@example.com"))
     }
 
     func testVerifyBadSignature() throws {

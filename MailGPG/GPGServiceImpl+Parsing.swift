@@ -132,6 +132,10 @@ extension GPGServiceImpl {
     }
 
     /// Parse a GPG user-ID string in the form `"Name (comment) <email>"`.
+    ///
+    /// A user ID can also be the bare address with no brackets, which
+    /// `gpg --quick-gen-key alice@example.com` creates. That yields the address
+    /// and an empty name; text with spaces or without an `@` stays a name.
     func parseUID(_ uid: String) -> (name: String, email: String) {
         if let lt = uid.lastIndex(of: "<"),
            let gt = uid.lastIndex(of: ">"), lt < gt {
@@ -142,6 +146,10 @@ extension GPGServiceImpl {
                 name = String(name[..<paren]).trimmingCharacters(in: .whitespaces)
             }
             return (name, email)
+        }
+        let bare = uid.trimmingCharacters(in: .whitespaces)
+        if bare.contains("@"), !bare.contains(where: \.isWhitespace) {
+            return ("", bare)
         }
         return (uid, "")
     }
@@ -268,25 +276,29 @@ extension GPGServiceImpl {
         return .signatureInvalid(reason: "No valid signature found")
     }
 
-    /// Look up each signer's trust level in the local keyring and return an
-    /// updated `SecurityStatus` with the real `trustLevel` filled in.
-    /// Falls back to `.unknown` for any key that can't be found locally.
-    func enrichWithTrust(_ status: SecurityStatus) -> SecurityStatus {
-        func trust(forFingerprint fp: String) -> TrustLevel {
+    /// Look up each signer's key in the local keyring by the VALIDSIG
+    /// fingerprint and fill in its trust level and every live address on it.
+    /// A key that can't be found locally gets `.unknown` and no addresses.
+    func enrichFromKeyring(_ status: SecurityStatus) -> SecurityStatus {
+        func key(forFingerprint fp: String) -> KeyInfo? {
             guard let fp = try? validatedKeyIdentifier(fp, fieldName: "fingerprint", allowShort: false)
-            else { return .unknown }
+            else { return nil }
             guard let (out, _, code) = try? gpg(["--list-keys", "--with-colons",
                                                   "--fixed-list-mode", fp]),
-                  code == 0 else { return .unknown }
-            // Use validity (lsign/web-of-trust result) rather than ownertrust so the
-            // trust badge in the UI reflects whether the key has actually been verified.
+                  code == 0 else { return nil }
             return parseColonOutput(String(data: out, encoding: .utf8) ?? "",
-                                    wantSecretKeys: false).first?.validity ?? .unknown
+                                    wantSecretKeys: false).first
         }
         func enrich(_ signers: [Signer]) -> [Signer] {
-            signers.map { Signer(email: $0.email, keyID: $0.keyID,
-                                 fingerprint: $0.fingerprint,
-                                 trustLevel: trust(forFingerprint: $0.fingerprint)) }
+            signers.map {
+                let key = key(forFingerprint: $0.fingerprint)
+                // Use validity (lsign/web-of-trust result) rather than ownertrust so the
+                // trust badge in the UI reflects whether the key has actually been verified.
+                return Signer(email: $0.email, keyID: $0.keyID,
+                              fingerprint: $0.fingerprint,
+                              trustLevel: key?.validity ?? .unknown,
+                              emails: key?.emails ?? [])
+            }
         }
         switch status {
         case .encrypted(let signers): return .encrypted(signers: enrich(signers))

@@ -1,8 +1,7 @@
 # MailGPG — Ravi's fork, setup runbook
 
-Branch `pyxzl`. Rebranded to `net.pyxzl` / team `3HKD37M482`, plus four fixes on
-top of upstream `b8afeba`. Nothing here has been compiled — I have no Xcode in
-this environment — so step 5 is where you find out whether my patches build.
+Branch `pyxzl`. Rebranded to `net.pyxzl` / team `3HKD37M482`, with the fixes
+README.md lists on top of upstream `b8afeba`.
 
 Run everything from the repository root.
 
@@ -209,8 +208,10 @@ only that. The human-readable fallback is gone.
 
 **Signer identity** (`MessageSecurityHandler.swift`) — a valid signature from
 any key rendered as signed, with no check that the signing key belongs to the
-From address. Mismatches are now reported as an invalid signature naming both
-addresses. Encryption status is unaffected.
+From address. A From address that is none of the signing key's live user IDs
+is now reported as an invalid signature naming both addresses. GPG's status
+names only the primary user ID, so the host looks the key up and passes every
+address on it. Encryption status is unaffected.
 
 **BCC disclosure** (XPC protocol, `GPGServiceImpl.swift`) — every recipient
 fingerprint became a `--recipient`, and OpenPGP stamps a readable key ID per
@@ -333,9 +334,12 @@ choosing it.
 
 Signer mismatch is the one worth exercising deliberately, since it changes what
 you see on legitimate mail if an address is missing from a key. Send yourself a
-signed message from each account and confirm both still verify. If one now
-reports an invalid signature, the signing key lacks that address as a UID — add
-it with `gpg --edit-key <fpr>` then `adduid`, rather than reverting the check.
+signed message from each account and confirm all of them verify, including one
+whose address is a secondary user ID on its key: the check accepts any live
+user ID, not only the primary one. If one reports an invalid signature, look at
+`gpg --list-keys <fpr>`: the From address is either not on the key at all or
+its user ID is revoked or expired. Only in the first case is `adduid` (via
+`gpg --edit-key <fpr>`) the fix; don't revert the check.
 
 For BCC, send an encrypted message to one address with another in BCC, then
 inspect the packet from the recipient's side:

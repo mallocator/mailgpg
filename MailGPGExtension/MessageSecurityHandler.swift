@@ -444,7 +444,8 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 // ciphertext, which is exactly the bytes Mail will hand back.
                 let signer = signerKey.map {
                     Signer(email: $0.email, keyID: $0.keyID,
-                           fingerprint: $0.fingerprint, trustLevel: $0.trustLevel)
+                           fingerprint: $0.fingerprint, trustLevel: $0.trustLevel,
+                           emails: $0.emails)
                 }
                 let signers = signer.map { [$0] } ?? []
                 let status: SecurityStatus = shouldEncrypt
@@ -729,8 +730,9 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     /// authenticated — the signer's address is shown, but as small print beside
     /// a reassuring badge.
     ///
-    /// When the signing key's address is not the one the message claims to come
-    /// from, the signature is reported as invalid with both addresses named.
+    /// When the address the message claims to come from is none of the signing
+    /// key's live user IDs — primary or not — the signature is reported as
+    /// invalid with both addresses named.
     /// Encryption status is unaffected: `makeDecodedMessage` still marks the
     /// message encrypted via `wasEncrypted`, so only the signature badge drops.
     nonisolated static func checkSignerMatchesSender(_ status: SecurityStatus,
@@ -746,7 +748,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         let from = bareEmail(inHeaderValue: decodeMIMEWords(fromHeader))
         guard !from.isEmpty else { return status }
 
-        if signers.contains(where: { $0.email.lowercased() == from }) { return status }
+        if signers.contains(where: { $0.hasAddress(from) }) { return status }
 
         let named = signers.map(\.email).filter { !$0.isEmpty }
         let signerList = named.isEmpty ? "an unidentified key" : named.joined(separator: ", ")

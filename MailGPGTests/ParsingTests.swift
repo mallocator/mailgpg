@@ -33,6 +33,13 @@ final class ParsingTests: XCTestCase {
         XCTAssertEqual(email, "dave@example.com")
     }
 
+    func testParseUID_bareEmail() {
+        // A user ID can be just the address, with no name and no brackets.
+        let (name, email) = svc.parseUID("enc@example.com")
+        XCTAssertEqual(name,  "")
+        XCTAssertEqual(email, "enc@example.com")
+    }
+
     func testParseUID_empty() {
         let (name, email) = svc.parseUID("")
         XCTAssertEqual(name,  "")
