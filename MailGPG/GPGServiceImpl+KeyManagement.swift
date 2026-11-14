@@ -34,10 +34,13 @@ extension GPGServiceImpl {
     func resolveKey(email: String? = nil, keyID: String? = nil) throws -> KeyInfo? {
         let keyservers = currentKeyservers()
 
-        if let email {
+        // gpg reads options after operands too, so an address from a mail
+        // header such as `--log-file=/path/x@y` would set an option. `--`
+        // ends the options; no real address starts with a dash.
+        if let email, !email.hasPrefix("-") {
             // ── Step 1: local keyring by email ───────────────────────────
             let (localOut, _, localCode) = try gpg(
-                ["--list-keys", "--with-colons", "--fixed-list-mode", email])
+                ["--list-keys", "--with-colons", "--fixed-list-mode", "--", email])
             if localCode == 0, let key = usableKey(for: email, in:
                 parseColonOutput(String(data: localOut, encoding: .utf8) ?? "", wantSecretKeys: false)) {
                 return key
@@ -55,7 +58,7 @@ extension GPGServiceImpl {
                 "--keyserver-options", "timeout=10",
                 "--no-auto-check-trustdb",
                 "--with-colons", "--fixed-list-mode",
-                email
+                "--", email
             ])
             if wkdCode == 0, var key = usableKey(for: email, in:
                 parseColonOutput(String(data: wkdOut, encoding: .utf8) ?? "", wantSecretKeys: false)) {
@@ -75,7 +78,7 @@ extension GPGServiceImpl {
                     "--keyserver-options", "timeout=10",
                     "--no-auto-check-trustdb",
                     "--with-colons", "--fixed-list-mode",
-                    email
+                    "--", email
                 ])
                 guard code == 0, let key = usableKey(for: email, in:
                     parseColonOutput(String(data: out, encoding: .utf8) ?? "", wantSecretKeys: false))

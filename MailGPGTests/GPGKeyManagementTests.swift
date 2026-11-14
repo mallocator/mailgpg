@@ -255,4 +255,13 @@ final class GPGKeyManagementTests: XCTestCase {
         let key = try svc.resolveKey(email: "bare@example.com")
         XCTAssertEqual(key?.email, "bare@example.com")
     }
+
+    func testResolveKey_addressCannotInjectGPGOptions() throws {
+        // gpg reads options after operands too, and `--log-file=/path/x@y`
+        // is a valid address, e.g. a From header of an incoming mail.
+        let logPath = homedir.path + "/injected@example.com"
+        let key = try svc.resolveKey(email: "--log-file=\(logPath)")
+        XCTAssertNil(key)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: logPath), "gpg took the address as an option")
+    }
 }
