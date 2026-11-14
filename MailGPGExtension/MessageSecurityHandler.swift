@@ -621,7 +621,13 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
             } else {
                 banner = nil
             }
-            return makeDecodedMessage(data: plaintext, status: status, wasEncrypted: true, banner: banner)
+            // Only gpg's DECRYPTION_OKAY makes it encrypted: gpg --decrypt also
+            // succeeds on an opaque signed message or a stored literal, which
+            // were never encrypted. The signer check may have turned the status
+            // into an invalid signature, so ask the status from before it.
+            let wasEncrypted: Bool
+            if case .encrypted = rawStatus { wasEncrypted = true } else { wasEncrypted = false }
+            return makeDecodedMessage(data: plaintext, status: status, wasEncrypted: wasEncrypted, banner: banner)
         } catch let error as NSError {
             logNSError(error, prefix: "decodedMessage: decrypt error")
             // Return nil so Mail shows the raw message instead of crashing.

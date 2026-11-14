@@ -549,13 +549,16 @@ extension GPGServiceImpl {
         // swiftlint:disable:next optional_data_string_conversion
         let plaintextStr = String(decoding: plaintext, as: UTF8.self)
 
-        // ── inline PGP: replace just the encrypted block, keep surrounding text ──
+        // ── inline PGP: the decrypted text alone ──
+        // Text around the block is neither encrypted nor signed, but shown
+        // with it, it took on the block's lock and signer: anyone could wrap a
+        // ciphertext Alice once sent in their own words. It stays in the raw
+        // source.
         if let originalStr = String(data: original, encoding: .utf8),
            let (envHeaders, partCT, decodedBody) = findTextPlainBody(in: originalStr),
-           let pgpRange = inlinePGPRange(in: decodedBody) {
+           inlinePGPRange(in: decodedBody) != nil {
             log.info("decrypt: rebuilt inline PGP message as text/plain")
             let eol = lineEnding(in: envHeaders)
-            let rewrittenBody = decodedBody.replacingCharacters(in: pgpRange, with: plaintextStr)
 
             var headers = removeHeader("content-type", from: envHeaders)
             headers = removeHeader("content-transfer-encoding", from: headers)
@@ -570,7 +573,7 @@ extension GPGServiceImpl {
             if foldedHeaderValue("mime-version", in: headers) == nil {
                 headers += eol + "MIME-Version: 1.0"
             }
-            let normalizedBody = normalizeLineEndings(in: rewrittenBody, to: eol)
+            let normalizedBody = normalizeLineEndings(in: plaintextStr, to: eol)
             return (headers + eol + eol + normalizedBody).data(using: .utf8) ?? Data(plaintextStr.utf8)
         }
 

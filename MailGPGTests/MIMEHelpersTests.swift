@@ -616,7 +616,7 @@ final class MIMEHelpersTests: XCTestCase {
 
     // MARK: - reconstructDecryptedMessage (inline PGP)
 
-    func testReconstructDecryptedMessage_inlinePGPPreservesSurroundingText() throws {
+    func testReconstructDecryptedMessage_inlinePGPShowsOnlyTheDecryptedText() throws {
         let msg = """
             From: notifications@example.invalid
             To: assigned@example.invalid
@@ -656,9 +656,10 @@ final class MIMEHelpersTests: XCTestCase {
         XCTAssertFalse(result.lowercased().contains("multipart/alternative"), "result=\(result)")
         let (_, bodyData) = svc.splitMessage(result.data(using: .utf8)!)
         let body = String(data: bodyData, encoding: .utf8) ?? ""
-        XCTAssert(body.contains("Someone left a comment"), "body=\(body)")
+        // The text around the block is neither encrypted nor signed (MGP-21).
+        XCTAssertFalse(body.contains("Someone left a comment"), "body=\(body)")
         XCTAssert(body.contains("Secret replacement"), "body=\(body)")
-        XCTAssert(body.contains("Reply to this message"), "body=\(body)")
+        XCTAssertFalse(body.contains("Reply to this message"), "body=\(body)")
         XCTAssertFalse(body.contains("-----BEGIN PGP MESSAGE-----"), "PGP block should be replaced; body=\(body)")
     }
 
@@ -690,10 +691,10 @@ final class MIMEHelpersTests: XCTestCase {
         ), encoding: .utf8) ?? ""
         let (_, bodyData) = svc.splitMessage(result.data(using: .utf8)!)
         let body = String(data: bodyData, encoding: .utf8) ?? ""
-        XCTAssert(body.contains("Grüße vor dem Block"), "body=\(body)")
         XCTAssert(body.contains("Entschlüsselter Inhalt"), "body=\(body)")
-        XCTAssert(body.contains("Tschüß nach dem Block"), "body=\(body)")
-        XCTAssertFalse(body.contains("=C3=BC"), "QP escapes should be decoded; body=\(body)")
+        XCTAssertFalse(body.contains("vor dem Block"), "body=\(body)")
+        XCTAssertFalse(body.contains("nach dem Block"), "body=\(body)")
+        XCTAssert(result.lowercased().contains("charset=utf-8"), "result=\(result)")
         XCTAssertFalse(body.contains("-----BEGIN PGP MESSAGE-----"), "body=\(body)")
     }
 }

@@ -162,7 +162,11 @@ final class GPGCryptoTests: XCTestCase {
         XCTAssertTrue(signers.isEmpty, "Encrypt-only message should have no signers")
     }
 
-    func testDecryptInlinePGPPreservesSurroundingText() throws {
+    /// Text around an inline block is neither encrypted nor signed, yet it
+    /// shared the block's lock and signer in Mail: anyone could wrap a
+    /// ciphertext Alice once sent in their own words. Only the decrypted text
+    /// is shown; the rest stays in the raw source.
+    func testDecryptInlinePGP_showsOnlyTheDecryptedText() throws {
         let fp = homedir.fingerprint
         let secret = "Inline secret body"
         let (ciphertext, stderr, code) = try homedir.run(
@@ -212,9 +216,9 @@ final class GPGCryptoTests: XCTestCase {
         XCTAssertFalse(plainStr.lowercased().contains("multipart/alternative"), "plain=\(plainStr)")
         let (_, bodyData) = svc.splitMessage(Data(plainStr.utf8))
         let body = String(data: bodyData, encoding: .utf8) ?? ""
-        XCTAssertTrue(body.contains("Prefix before block"), "body=\(body)")
+        XCTAssertFalse(body.contains("Prefix before block"), "body=\(body)")
         XCTAssertTrue(body.contains(secret), "body=\(body)")
-        XCTAssertTrue(body.contains("Suffix after block"), "body=\(body)")
+        XCTAssertFalse(body.contains("Suffix after block"), "body=\(body)")
         XCTAssertFalse(body.contains("-----BEGIN PGP MESSAGE-----"), "body=\(body)")
 
         let status = try XCTUnwrap(
@@ -224,6 +228,23 @@ final class GPGCryptoTests: XCTestCase {
             XCTFail("Expected .encrypted, got \(status)"); return
         }
         XCTAssertTrue(signers.isEmpty, "Encrypt-only message should have no signers")
+    }
+
+    /// gpg --decrypt exits 0 on a literal packet that was never encrypted.
+    func testDecryptInlineStoredLiteral_isNotEncrypted() throws {
+        let (stored, stderr, code) = try homedir.run(["--armor", "--store"], input: Data("not secret".utf8))
+        XCTAssertEqual(code, 0, "gpg --store failed: \(stderr)")
+        let message = "From: sender@example.com\nContent-Type: text/plain\n\n"
+            + (String(data: stored, encoding: .utf8) ?? "")
+        var statusRaw: Data?
+        let sem = DispatchSemaphore(value: 0)
+        svc.decrypt(data: Data(message.utf8)) { _, statusData, _ in
+            statusRaw = statusData
+            sem.signal()
+        }
+        sem.wait()
+        let status = try XCTUnwrap(statusRaw.flatMap { try? xpcDecode(SecurityStatus.self, from: $0) })
+        if case .encrypted = status { XCTFail("a stored literal was reported as encrypted") }
     }
 
     // MARK: - Sign + verify round-trip
