@@ -15,9 +15,11 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     ///
     /// `encodeCache` is keyed by message UUID plus everything that decides the
     /// output (`OutgoingMessage.cacheKey`), because Mail calls encode() up to
-    /// three times for the same logical message (send, auto-save, Sent copy)
-    /// with slightly different rawData each time; only the first should hit
-    /// GPG, and an edited message must not get the old ciphertext back.
+    /// three times for the same logical message, and an edited message must not
+    /// get the old ciphertext back. Auto-saves skip GPG (see `encode`). A Send
+    /// still runs GPG twice: Mail's first call carries an empty text/plain part
+    /// and its second, the one that goes out, the full text, so the two cannot
+    /// share a result (MGP-26).
     ///
     /// `decodeCache` is keyed by a hash of the message bytes, and only PGP
     /// messages ever reach it — see `decodedMessage` on why detection comes
@@ -249,10 +251,10 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
             }
         }
 
-        // Mail calls encode() up to three times for one message (send,
-        // auto-save, Sent copy); only the first should hit GPG. The key holds
-        // everything that decides the output, so an edited or re-addressed
-        // message after a failed send is encoded afresh.
+        // Mail calls encode() more than once per message. The key holds
+        // everything that decides the output, so an edited, re-addressed or
+        // incomplete copy (MGP-26: a Send's first call has an empty text/plain
+        // part) is encoded afresh rather than handed another call's ciphertext.
         let cacheKey = OutgoingMessage.cacheKey(
             messageUUID: header("x-universally-unique-identifier", in: message),
             shouldSign: shouldSign, shouldEncrypt: shouldEncrypt,

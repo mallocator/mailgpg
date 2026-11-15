@@ -312,7 +312,10 @@ single-window fallback still decides what is offered, never whom to encrypt to.
 **Encode cache** — keyed on the message UUID alone, so after a failed send an
 edit, a new recipient or toggling encryption still sent the old ciphertext. The
 key now includes the flags, the addresses, the fingerprints and a hash of the
-message without `Date`, `Message-Id` and `X-Apple-*`.
+message without `Date`, `Message-Id` and `X-Apple-*`. A Send runs gpg twice,
+deliberately: Mail's first `encode` call has an empty text/plain part, the
+second (the one that goes out) the full text, so the first result must not be
+reused (checked 2026-11-15, MGP-26).
 
 **Nothing to encode** — with no message data and signing or encryption on,
 `encode` returned neither a message nor an error, and Mail presumably sent the

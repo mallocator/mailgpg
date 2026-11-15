@@ -121,6 +121,18 @@ final class OutgoingMessageTests: XCTestCase {
         XCTAssertNotEqual(key(), key(rawData: edited))
     }
 
+    /// Mail's two encode calls on Send, as logged in Mail (MGP-26): the first
+    /// has an empty text/plain part. Reusing its result would send that.
+    func testSendWithoutPlainTextPartDoesNotMatchTheFullSend() {
+        func send(plain: String) -> Data {
+            Data(("From: me@x\r\nTo: a@x\r\nSubject: Hi\r\n"
+                + "Content-Type: multipart/alternative; boundary=\"B\"\r\n\r\n"
+                + "--B\r\nContent-Type: text/plain\r\n\r\n\(plain)\r\n"
+                + "--B\r\nContent-Type: text/html\r\n\r\n<p>Body</p>\r\n--B--\r\n").utf8)
+        }
+        XCTAssertNotEqual(key(rawData: send(plain: "")), key(rawData: send(plain: "> Body")))
+    }
+
     func testAddedRecipientChangesTheKey() {
         XCTAssertNotEqual(key(), key(addresses: ["a@x", "bcc:b@x"],
                                      recipients: Recipients(visible: ["FA"], hidden: ["FB"])))
