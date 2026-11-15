@@ -31,7 +31,11 @@ extension GPGServiceImpl {
         var expiry      = ""
         var created     = ""
         var capabilities = ""  // field[11]: capitals are what the whole key can still do
-        var uids: [(name: String, email: String, revoked: Bool)] = []
+        var uids: [(name: String, email: String, revoked: Bool, validity: TrustLevel)] = []
+
+        func level(_ raw: String) -> TrustLevel {
+            raw == "n" ? .none : TrustLevel(rawValue: raw) ?? .unknown
+        }
 
         func flush() {
             guard inKey, !fingerprint.isEmpty, !uids.isEmpty else { return }
@@ -41,17 +45,17 @@ extension GPGServiceImpl {
             let display = live.first ?? uids[0]
             let expiryDate:  Date? = Double(expiry).map  { Date(timeIntervalSince1970: $0) }
             let createdDate: Date? = Double(created).map { Date(timeIntervalSince1970: $0) }
-            let trust: TrustLevel = ownertrust == "n" ? .none
-                                  : TrustLevel(rawValue: ownertrust) ?? .unknown
-            let validityLevel: TrustLevel = validity == "n" ? .none
-                                          : TrustLevel(rawValue: validity) ?? .unknown
+            // Two user IDs can carry one address; the better verified one counts.
+            let addressValidity = Dictionary(
+                live.filter { !$0.email.isEmpty }.map { ($0.email.lowercased(), $0.validity) },
+                uniquingKeysWith: max)
             results.append(KeyInfo(
                 fingerprint: fingerprint,
                 keyID:       fingerprint.count >= 8 ? String(fingerprint.suffix(8)) : keyID,
                 email:       display.email,
                 name:        display.name,
-                trustLevel:  trust,
-                validity:    validityLevel,
+                trustLevel:  level(ownertrust),
+                validity:    level(validity),
                 hasSecretKey: wantSecretKeys,
                 expiresAt:   expiryDate,
                 createdAt:   createdDate,
@@ -60,6 +64,7 @@ extension GPGServiceImpl {
                 // and encrypting to it or accepting a signature from it should
                 // not keep working because the key as a whole is still valid.
                 emails:      live.map { $0.email.lowercased() }.filter { !$0.isEmpty },
+                addressValidity: addressValidity,
                 canEncrypt:  capabilities.contains("E")
             ))
         }
@@ -99,7 +104,8 @@ extension GPGServiceImpl {
                 let (name, email) = parseUID(unescapeColonField(f.count > 9 ? f[9] : ""))
                 uids.append((name: name,
                              email: email,
-                             revoked: uidValidity == "r" || uidValidity == "e"))
+                             revoked: uidValidity == "r" || uidValidity == "e",
+                             validity: level(uidValidity)))
 
             default: break
             }
@@ -297,10 +303,12 @@ extension GPGServiceImpl {
                 let key = key(forFingerprint: $0.fingerprint)
                 // Use validity (lsign/web-of-trust result) rather than ownertrust so the
                 // trust badge in the UI reflects whether the key has actually been verified.
+                // The extension narrows it to the sender's user ID once it knows the From.
                 return Signer(email: $0.email, keyID: $0.keyID,
                               fingerprint: $0.fingerprint,
                               trustLevel: key?.validity ?? .unknown,
-                              emails: key?.emails ?? [])
+                              emails: key?.emails ?? [],
+                              addressValidity: key?.addressValidity ?? [:])
             }
         }
         switch status {

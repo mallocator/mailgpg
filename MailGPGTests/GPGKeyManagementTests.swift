@@ -307,6 +307,62 @@ final class GPGKeyManagementTests: XCTestCase {
         assertEncodingFailed(error)
     }
 
+    /// The MGP-6 review's scenario: Mallory's key is lsigned for his own
+    /// address, he adds the user ID alice@bank and the key is re-imported.
+    /// Returns the key's fingerprint.
+    private func lsignedKeyWithUIDAddedLater() throws -> String {
+        try addKey(uid: "Mallory <mallory@example.com>")
+        let fp = String(try XCTUnwrap(records("fpr", ["mallory@example.com"]).first?
+            .split(separator: ":", omittingEmptySubsequences: false)[9]))
+        let (_, uidErr, uidCode) = try homedir.run(
+            ["--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+             "--quick-add-uid", fp, "Alice <alice@bank.example>"])
+        XCTAssertEqual(uidCode, 0, "Adding a UID failed: \(uidErr)")
+        let (withAlice, _, _) = try homedir.run(["--export", fp])
+        _ = try homedir.run(["--batch", "--yes", "--delete-secret-and-public-key", fp])
+
+        // Before: only Mallory's own user ID, which the user lsigns.
+        _ = try homedir.run(["--batch", "--import-filter", "keep-uid=mbox = mallory@example.com",
+                             "--import"], input: withAlice)
+        XCTAssertNil(wait { done in svc.lsignKey(fingerprint: fp) { done($0) } })
+        // After: the key comes back with the user ID he added.
+        let (_, importErr, importCode) = try homedir.run(["--batch", "--import"], input: withAlice)
+        XCTAssertEqual(importCode, 0, "Re-import failed: \(importErr)")
+        return fp
+    }
+
+    /// The key shows full validity; the user ID added later does not.
+    func testLsignedKeyDoesNotVouchForUIDAddedLater() throws {
+        let fp = try lsignedKeyWithUIDAddedLater()
+
+        let key = try XCTUnwrap(svc.resolveKey(email: "alice@bank.example"))
+        XCTAssertEqual(key.fingerprint, fp)
+        XCTAssertEqual(key.validity, .full, "The key itself is lsigned")
+        XCTAssertTrue(key.isTrusted(for: "mallory@example.com"))
+        XCTAssertFalse(key.isTrusted(for: "Alice@Bank.example"))
+        XCTAssertFalse(key.isVerified, "The key page and list may not call it verified")
+        XCTAssertEqual(key.weakestValidity, .none)
+        XCTAssertTrue(key.replacesPin("ALICES0REAL0KEY", for: "alice@bank.example"),
+                      "Alice's pinned key may not be replaced silently")
+        XCTAssertFalse(key.replacesPin("ALICES0REAL0KEY", for: "mallory@example.com"))
+        XCTAssertFalse(key.replacesPin(fp, for: "alice@bank.example"))
+        XCTAssertFalse(key.replacesPin(nil, for: "alice@bank.example"))
+    }
+
+    /// Verifying such a key again, the step the "Key changed" error asks for,
+    /// certifies the user ID added later.
+    func testLsignCertifiesUIDAddedLater() throws {
+        let fp = try lsignedKeyWithUIDAddedLater()
+
+        let error = wait { done in svc.lsignKey(fingerprint: fp) { done($0) } }
+        XCTAssertNil(error, "lsignKey returned error: \(String(describing: error))")
+
+        let key = try XCTUnwrap(svc.resolveKey(email: "alice@bank.example"))
+        XCTAssertTrue(key.isTrusted(for: "alice@bank.example"))
+        XCTAssertTrue(key.isVerified)
+        XCTAssertFalse(key.replacesPin("ALICES0REAL0KEY", for: "alice@bank.example"))
+    }
+
     // MARK: - Resolve by address
 
     /// Add a key with the single user ID `uid` to the test homedir.

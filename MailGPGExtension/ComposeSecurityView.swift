@@ -276,7 +276,7 @@ private struct RecipientRow: View {
     /// Anything auto-fetched from a keyserver starts out unverified, and the UI
     /// must say so — encryption runs with `--trust-model always`, so nothing
     /// else in the pipeline will.
-    private var verified: Bool { key?.trusted ?? false }
+    private var verified: Bool { key?.isTrusted(for: email) ?? false }
 
     var body: some View {
         HStack(spacing: 6) {

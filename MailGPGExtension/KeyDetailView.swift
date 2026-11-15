@@ -22,7 +22,7 @@ struct KeyDetailView: View {
         self.key = key
         self.onDeleted = onDeleted
         _selectedTrust = State(initialValue: key.trustLevel)
-        _isVerified = State(initialValue: key.validity == .full || key.validity == .ultimate)
+        _isVerified = State(initialValue: key.isVerified)
     }
 
     var body: some View {
@@ -80,13 +80,20 @@ struct KeyDetailView: View {
                     }
                     .disabled(isLsigning)
                 }
+                if !isVerified, !unverifiedAddresses.isEmpty, unverifiedAddresses != key.emails {
+                    // Typically an address added after the key was verified.
+                    Text("Not verified for: \(unverifiedAddresses.joined(separator: ", "))")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
                 Text(isVerified
-                     ? "This key is locally certified. Mail shows it as verified, PGP is offered "
-                     + "for this address, and a future change of key for it will be accepted."
+                     ? "Every address on this key is locally certified. Mail shows it as verified, "
+                     + "PGP is offered for these addresses, and a future change of key for them "
+                     + "will be accepted."
                      : "Only verify after confirming out-of-band — in person, by phone, not by "
-                     + "email — that the fingerprint above belongs to this person. Verifying also "
-                     + "offers PGP for this address and accepts this key in place of any "
-                     + "previously pinned one.")
+                     + "email — that the fingerprint above belongs to this person and that every "
+                     + "address on it is theirs. Verifying also offers PGP for these addresses and "
+                     + "accepts this key in place of any previously pinned one.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -200,6 +207,10 @@ struct KeyDetailView: View {
     }
 
     // MARK: - Helpers
+
+    private var unverifiedAddresses: [String] {
+        key.emails.filter { !key.isTrusted(for: $0) }
+    }
 
     private func formattedFingerprint(_ fp: String) -> String {
         // Group into 4-char blocks separated by spaces, with a double space at the midpoint.

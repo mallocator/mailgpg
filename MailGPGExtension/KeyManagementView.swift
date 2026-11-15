@@ -187,7 +187,7 @@ private struct PublicKeyRow: View {
                 Text(key.name.isEmpty ? key.email : key.name)
                     .font(.callout)
                 Spacer()
-                TrustLevelBadge(level: key.validity)
+                TrustLevelBadge(level: key.weakestValidity)
             }
             Text(key.email)
                 .font(.caption)

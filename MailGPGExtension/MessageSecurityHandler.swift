@@ -664,7 +664,13 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 reason: "This message has no single sender address, so the signature does not authenticate it.")
         }
 
-        if signers.contains(where: { $0.hasAddress(from) }) { return status }
+        // Trust is the validity of the user ID carrying From, not the key's:
+        // a key verified for one address can carry anyone's address unverified.
+        if signers.contains(where: { $0.hasAddress(from) }) {
+            let vouching = signers.map { $0.vouching(for: from) }
+            if case .encrypted = status { return .encrypted(signers: vouching) }
+            return .signed(signers: vouching)
+        }
 
         let named = signers.map(\.email).filter { !$0.isEmpty }
         let signerList = named.isEmpty ? "an unidentified key" : named.joined(separator: ", ")

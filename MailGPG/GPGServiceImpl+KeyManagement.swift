@@ -223,7 +223,9 @@ extension GPGServiceImpl {
     func lsignKey(fingerprint: String, reply: @escaping (Error?) -> Void) {
         do {
             let fingerprint = try validatedKeyIdentifier(fingerprint, fieldName: "fingerprint", allowShort: false)
-            let (_, stderr, code) = try gpg(["--batch", "--yes", "--lsign-key", fingerprint])
+            // --lsign-key asks which user IDs to sign once some already are, which
+            // batch mode can't answer; --quick-lsign-key signs every unsigned one.
+            let (_, stderr, code) = try gpg(["--batch", "--quick-lsign-key", fingerprint])
             guard code == 0 else {
                 throw GPGXPCError.make(.gpgFailed, message: "gpg lsign-key failed: \(stderr)")
             }

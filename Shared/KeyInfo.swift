@@ -25,11 +25,10 @@ struct KeyInfo: Codable, Identifiable, Equatable {
     let trustLevel: TrustLevel
 
     /// Calculated validity (field 1): whether this key is considered valid based on
-    /// local signatures (`lsign`) and web-of-trust calculations. Use this for the trust badge.
+    /// local signatures (`lsign`) and web-of-trust calculations. This is the best
+    /// validity of any of its user IDs, so it says nothing about a given address:
+    /// use `isTrusted(for:)` for that.
     let validity: TrustLevel
-
-    /// Whether this key has been verified (full or ultimate validity). Convenience accessor.
-    var trusted: Bool { validity == .full || validity == .ultimate }
 
     /// Whether a secret (private) key is available for this fingerprint.
     /// `true` means we can sign or decrypt with this key.
@@ -54,6 +53,13 @@ struct KeyInfo: Codable, Identifiable, Equatable {
     /// their own key looked like they had no key.
     var emails: [String] = []
 
+    /// Calculated validity of the user ID carrying each address in `emails`.
+    ///
+    /// Each user ID is certified on its own. A key lsigned for one address
+    /// shows full validity, and a user ID its owner adds later for someone
+    /// else's address stays unverified on that key.
+    var addressValidity: [String: TrustLevel] = [:]
+
     /// True when this key was found through Web Key Directory — served over
     /// HTTPS from the recipient's own mail domain, at a path derived from their
     /// address. That means whoever runs their mail publishes this key for this
@@ -65,6 +71,30 @@ struct KeyInfo: Codable, Identifiable, Equatable {
     /// capabilities). A key whose encryption subkey expired or was revoked
     /// still lists, but gpg refuses to encrypt to it.
     var canEncrypt: Bool = true
+
+    /// Whether the user ID carrying `address` has been verified (full or ultimate validity).
+    func isTrusted(for address: String) -> Bool {
+        let level = addressValidity[address.lowercased()]
+        return level == .full || level == .ultimate
+    }
+
+    /// The validity of the least verified address on this key: what the key
+    /// list and key page show. A key lsigned before its owner added an address
+    /// is not verified for that address. A key without addresses has its own.
+    var weakestValidity: TrustLevel {
+        emails.map { addressValidity[$0] ?? .unknown }.min() ?? validity
+    }
+
+    /// Whether every address on this key has been verified.
+    var isVerified: Bool { weakestValidity == .full || weakestValidity == .ultimate }
+
+    /// Whether using this key for `address` would silently replace `pinned`,
+    /// the fingerprint used for it before. Verifying the user ID for that
+    /// address is the deliberate act that accepts a replacement.
+    func replacesPin(_ pinned: String?, for address: String) -> Bool {
+        guard let pinned, pinned != fingerprint else { return false }
+        return !isTrusted(for: address)
+    }
 
     // `Identifiable` — SwiftUI needs a stable `id` property.
     var id: String { fingerprint }

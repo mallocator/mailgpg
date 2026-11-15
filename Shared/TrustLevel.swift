@@ -10,7 +10,9 @@ import Foundation
 ///   *owner* to certify other keys in the web of trust. Stored in `KeyInfo.trustLevel`.
 /// - **Calculated validity** (field 1): whether GPG considers a key valid, based on
 ///   local signatures (`lsign`) and web-of-trust calculations. Stored in `KeyInfo.validity`.
-enum TrustLevel: String, Codable, CaseIterable {
+///
+/// Ordered weakest to strongest.
+enum TrustLevel: String, Codable, CaseIterable, Comparable {
     case unknown  = "?"   // GPG: ?
     case none     = "-"   // GPG: -
     case marginal = "m"   // GPG: m
@@ -27,6 +29,18 @@ enum TrustLevel: String, Codable, CaseIterable {
         case .ultimate: return "Ultimate (my key)"
         }
     }
+
+    private var strength: Int {
+        switch self {
+        case .unknown:  return 0
+        case .none:     return 1
+        case .marginal: return 2
+        case .full:     return 3
+        case .ultimate: return 4
+        }
+    }
+
+    static func < (lhs: TrustLevel, rhs: TrustLevel) -> Bool { lhs.strength < rhs.strength }
 
     /// Value used in GPG `--import-ownertrust` colon format (2–6).
     var gpgOwntrustValue: Int {

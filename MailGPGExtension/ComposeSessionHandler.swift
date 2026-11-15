@@ -193,15 +193,16 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
                     // and refuse silently swapping it.
                     if key.viaWKD { GPGService.shared.recordWKDKey(for: email) }
                     let pinned = GPGService.shared.pinnedFingerprint(for: email)
-                    if let pinned, pinned != key.fingerprint, !key.trusted {
+                    if let pinned, key.replacesPin(pinned, for: email) {
                         keyStatus[email] = .keyChanged
                         recipientKeys[email] = key
                         annotations[address] = .error(withLocalizedDescription:
                             "Key changed (was \(String(pinned.suffix(8))), now \(key.keyID))")
                     } else {
                         // Either first contact, the same key as last time, or a
-                        // key the user has verified locally — verifying is the
-                        // deliberate act that accepts a replacement.
+                        // key whose user ID for this address the user verified
+                        // locally — verifying is the deliberate act that accepts
+                        // a replacement.
                         GPGService.shared.pin(fingerprint: key.fingerprint, for: email)
                         keyStatus[email] = .found
                         recipientKeys[email] = key

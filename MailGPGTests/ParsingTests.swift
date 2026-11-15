@@ -167,6 +167,52 @@ final class ParsingTests: XCTestCase {
         XCTAssertEqual(keys[0].email, "primary@example.com")
     }
 
+    func testParseColonOutput_validityPerAddress() {
+        // The pub line shows the best user ID's validity; each address keeps its own.
+        let output = """
+            pub:f:4096:1:AABBCCDD11223344:1600000000:::-:
+            fpr:::::::::AABBCCDD112233441122334411223344AABBCCDD:
+            uid:f::::1600000001::H1::Mallory <mallory@example.com>:::::::::0:
+            uid:-::::1600000002::H2::Alice <Alice@Bank.example>:::::::::0:
+            uid:-::::1600000003::H3::Mallory again <mallory@example.com>:::::::::0:
+            uid:r::::1600000004::H4::Gone <gone@example.com>:::::::::0:
+            """
+        let key = svc.parseColonOutput(output, wantSecretKeys: false)[0]
+        XCTAssertEqual(key.validity, .full)
+        XCTAssertEqual(key.addressValidity, ["mallory@example.com": .full, "alice@bank.example": .none])
+        XCTAssertTrue(key.isTrusted(for: "mallory@example.com"))
+        XCTAssertFalse(key.isTrusted(for: "alice@bank.example"))
+        XCTAssertFalse(key.isTrusted(for: "gone@example.com"))
+        XCTAssertEqual(key.weakestValidity, .none)
+        XCTAssertFalse(key.isVerified)
+    }
+
+    func testParseColonOutput_verifiedOnlyWhenEveryAddressIs() {
+        let output = """
+            pub:u:4096:1:AABBCCDD11223344:1600000000:::u:
+            fpr:::::::::AABBCCDD112233441122334411223344AABBCCDD:
+            uid:u::::1600000001::H1::Me <me@example.com>:::::::::0:
+            uid:f::::1600000002::H2::Me at work <me@work.example>:::::::::0:
+            """
+        let key = svc.parseColonOutput(output, wantSecretKeys: false)[0]
+        XCTAssertEqual(key.weakestValidity, .full)
+        XCTAssertTrue(key.isVerified)
+    }
+
+    func testTrustLevel_ordersWeakestFirst() {
+        XCTAssertEqual(TrustLevel.allCases.sorted(), [.unknown, .none, .marginal, .full, .ultimate])
+        XCTAssertEqual(max(TrustLevel.none, .full), .full)
+    }
+
+    func testSignerVouchesOnlyForItsVerifiedUserID() {
+        let signer = Signer(email: "mallory@example.com", keyID: "AABBCCDD", fingerprint: "AABBCCDD",
+                            trustLevel: .full, emails: ["mallory@example.com", "alice@bank.example"],
+                            addressValidity: ["mallory@example.com": .full, "alice@bank.example": .none])
+        XCTAssertEqual(signer.vouching(for: "Alice@Bank.example").trustLevel, .none)
+        XCTAssertEqual(signer.vouching(for: "mallory@example.com").trustLevel, .full)
+        XCTAssertEqual(signer.vouching(for: "other@example.com").trustLevel, .unknown)
+    }
+
     func testParseColonOutput_ignoresSecKeyRecords_whenWantingPublic() {
         let output = """
             sec:u:4096:1:AABBCCDD11223344:1600000000:::u:
