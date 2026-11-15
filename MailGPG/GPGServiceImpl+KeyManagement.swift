@@ -39,12 +39,14 @@ extension GPGServiceImpl {
         // header such as `--log-file=/path/x@y` would set an option. `--`
         // ends the options; no real address starts with a dash.
         if let email, !email.hasPrefix("-") {
+            let pinned = pinnedFingerprint(for: email)
+
             // ── Step 1: local keyring by email ───────────────────────────
             let (localOut, _, localCode) = try gpg(
                 ["--list-keys", "--with-colons", "--fixed-list-mode", "--", email])
             if localCode == 0, let key = usableKey(for: email, in:
                 parseColonOutput(String(data: localOut, encoding: .utf8) ?? "", wantSecretKeys: false),
-                forEncryption: forEncryption) {
+                forEncryption: forEncryption, pinned: pinned) {
                 return key
             }
 
@@ -64,7 +66,7 @@ extension GPGServiceImpl {
             ])
             if wkdCode == 0, var key = usableKey(for: email, in:
                 parseColonOutput(String(data: wkdOut, encoding: .utf8) ?? "", wantSecretKeys: false),
-                forEncryption: forEncryption) {
+                forEncryption: forEncryption, pinned: pinned) {
                 key.viaWKD = true
                 log.info("resolveKey: found via WKD")
                 return key
@@ -85,7 +87,7 @@ extension GPGServiceImpl {
                 ])
                 guard code == 0, let key = usableKey(for: email, in:
                     parseColonOutput(String(data: out, encoding: .utf8) ?? "", wantSecretKeys: false),
-                    forEncryption: forEncryption)
+                    forEncryption: forEncryption, pinned: pinned)
                 else { continue }
                 return key
             }
@@ -117,13 +119,16 @@ extension GPGServiceImpl {
     /// listing for bob@example.com also holds `Mallory <notbob@example.com>`.
     /// Only a key carrying the address itself as a live user ID qualifies —
     /// primary or not — and an unexpired one wins over an expired one. For
-    /// encryption, only a key that can still encrypt qualifies.
-    func usableKey(for email: String, in keys: [KeyInfo], forEncryption: Bool = false) -> KeyInfo? {
+    /// encryption, only a key that can still encrypt qualifies. Among those,
+    /// the `pinned` fingerprint wins over keys listed before it.
+    func usableKey(for email: String, in keys: [KeyInfo], forEncryption: Bool = false,
+                   pinned: String? = nil) -> KeyInfo? {
         let wanted = email.lowercased()
         let carrying = keys.filter {
             !$0.isRevoked && $0.emails.contains(wanted) && (!forEncryption || $0.canEncrypt)
         }
-        return carrying.first { $0.expiresAt.map { $0 > Date() } ?? true } ?? carrying.first
+        let unexpired = carrying.filter { $0.expiresAt.map { $0 > Date() } ?? true }
+        return KeyInfo.preferring(pinned, in: unexpired.isEmpty ? carrying : unexpired)
     }
 
     func listSecretKeys(reply: @escaping (Data?, Error?) -> Void) {

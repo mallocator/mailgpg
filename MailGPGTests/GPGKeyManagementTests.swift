@@ -363,4 +363,41 @@ final class GPGKeyManagementTests: XCTestCase {
         XCTAssertNil(svc.usableKey(for: "signer@example.com", in: listing, forEncryption: true))
         XCTAssertNotNil(svc.usableKey(for: homedir.email, in: try localListing(homedir.email), forEncryption: true))
     }
+
+    // MARK: - Pinned key among several for one address
+
+    /// Two keys carrying alice@bank.example, in listing order; Alice's pinned
+    /// key is the second.
+    private func twoKeysForAlice() throws -> (listing: [KeyInfo], other: KeyInfo, pinned: KeyInfo) {
+        try addKey(uid: "Mallory <alice@bank.example>")
+        try addKey(uid: "Alice <alice@bank.example>")
+        let listing = try localListing("alice@bank.example")
+        XCTAssertEqual(listing.count, 2)
+        return (listing, listing[0], listing[1])
+    }
+
+    func testUsableKey_prefersPinnedKeyListedSecond() throws {
+        let (listing, other, pinned) = try twoKeysForAlice()
+        XCTAssertEqual(svc.usableKey(for: "alice@bank.example", in: listing, pinned: pinned.fingerprint)?.fingerprint,
+                       pinned.fingerprint)
+        XCTAssertEqual(svc.usableKey(for: "alice@bank.example", in: listing)?.fingerprint, other.fingerprint)
+    }
+
+    func testResolveKey_prefersPinnedKey() throws {
+        let (_, _, pinned) = try twoKeysForAlice()
+        let svc = GPGServiceImpl(gnupgHome: homedir.path, pinnedKeys: ["alice@bank.example": pinned.fingerprint])
+        XCTAssertEqual(try svc.resolveKey(email: "Alice@Bank.example")?.fingerprint, pinned.fingerprint)
+    }
+
+    func testKeysByAddress_prefersPinnedKeyListedSecond() throws {
+        let (listing, other, pinned) = try twoKeysForAlice()
+        let byPin = KeyInfo.keysByAddress(listing) { $0 == "alice@bank.example" ? pinned.fingerprint : nil }
+        XCTAssertEqual(byPin["alice@bank.example"]?.fingerprint, pinned.fingerprint)
+        // No pin, or one for a key no longer in the keyring: the first listed, as before.
+        let gone = String(repeating: "A", count: 40)
+        for pin in [nil, gone] {
+            let chosen = KeyInfo.keysByAddress(listing) { _ in pin }
+            XCTAssertEqual(chosen["alice@bank.example"]?.fingerprint, other.fingerprint)
+        }
+    }
 }

@@ -69,3 +69,20 @@ struct KeyInfo: Codable, Identifiable, Equatable {
     // `Identifiable` — SwiftUI needs a stable `id` property.
     var id: String { fingerprint }
 }
+
+extension KeyInfo {
+    /// Which of `keys`, all carrying one address, to use for it: the pinned
+    /// fingerprint when it is among them, else the first. Another key for the
+    /// address listed before the pinned one must not shadow it: the pin check
+    /// would then report a changed key though the pinned one is right here.
+    static func preferring(_ pinned: String?, in keys: [KeyInfo]) -> KeyInfo? {
+        keys.first { $0.fingerprint == pinned } ?? keys.first
+    }
+
+    /// One key per address on `keys`, each chosen by `preferring(_:in:)` with
+    /// that address's pin. A key carrying three user IDs is listed under all three.
+    static func keysByAddress(_ keys: [KeyInfo], pinned: (String) -> String?) -> [String: KeyInfo] {
+        Dictionary(grouping: keys.flatMap { key in key.emails.map { ($0, key) } }, by: \.0)
+            .compactMapValues { pairs in preferring(pinned(pairs[0].0), in: pairs.map(\.1)) }
+    }
+}

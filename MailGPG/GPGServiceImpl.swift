@@ -19,9 +19,13 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
     /// Overrides the stored `protectSubject` preference. Testing only.
     private let protectSubjectOverride: Bool?
 
-    init(gnupgHome: String? = nil, protectSubject: Bool? = nil) {
+    /// Overrides the stored pinned recipient keys. Testing only.
+    private let pinnedKeysOverride: [String: String]?
+
+    init(gnupgHome: String? = nil, protectSubject: Bool? = nil, pinnedKeys: [String: String]? = nil) {
         self.gnupgHome = gnupgHome
         self.protectSubjectOverride = protectSubject
+        self.pinnedKeysOverride = pinnedKeys
         super.init()
     }
 
@@ -51,6 +55,13 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
     /// why. Worth turning on when you know who you write to.
     var protectSubject: Bool {
         protectSubjectOverride ?? (Self.defaults?.bool(forKey: "protectSubject") ?? false)
+    }
+
+    /// The fingerprint the extension pinned for this address
+    /// (`GPGService.pin(fingerprint:for:)`), if any.
+    func pinnedFingerprint(for email: String) -> String? {
+        let map = pinnedKeysOverride ?? (Self.defaults?.dictionary(forKey: "pinnedKeys") as? [String: String])
+        return map?[email.lowercased()]
     }
 
     /// Returns the current keyserver list from shared UserDefaults.

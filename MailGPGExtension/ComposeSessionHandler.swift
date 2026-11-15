@@ -157,13 +157,10 @@ class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
             localKeysByEmail = [:]
         } else {
             do {
-                // One entry per address, not per key: a key carrying three user
-                // IDs must be findable under all three.
-                localKeysByEmail = Dictionary(
+                localKeysByEmail = KeyInfo.keysByAddress(
                     try await GPGService.shared.listPublicKeys()
-                        .filter { !$0.isRevoked && ($0.expiresAt.map { $0 > Date() } ?? true) }
-                        .flatMap { key in key.emails.map { ($0, key) } },
-                    uniquingKeysWith: { first, _ in first }
+                        .filter { !$0.isRevoked && ($0.expiresAt.map { $0 > Date() } ?? true) },
+                    pinned: GPGService.shared.pinnedFingerprint(for:)
                 )
             } catch {
                 for address in addresses {
