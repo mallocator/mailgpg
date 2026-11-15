@@ -138,6 +138,28 @@ final class GPGServiceConnectionTests: XCTestCase {
         XCTAssertFalse(recorder.reported.contains(false))
     }
 
+    /// A ping in flight when the host app restarts fails with an interruption.
+    /// The interruption handler reports the host app as unknown; if the failed
+    /// ping then reported it unavailable, landing after that handler, nothing
+    /// would reset it and every compose window would offer nothing.
+    func testInterruptedPingLeavesReachabilityUnknown() async throws {
+        start(hostDies: true)
+        do {
+            _ = try await ping()
+            XCTFail("the host app dropped the call")
+        } catch {
+            XCTAssertNil(GPGServiceConnection.reachability(afterFailedPing: error))
+        }
+    }
+
+    /// No connection, or a dead one: the host app is unreachable.
+    func testUnreachableHostAppIsUnavailable() {
+        let notRunning = GPGXPCError.make(.hostAppNotRunning, message: GPGXPCError.hostAppNotRunningMessage)
+        let invalidated = NSError(domain: NSCocoaErrorDomain, code: NSXPCConnectionInvalid)
+        XCTAssertEqual(GPGServiceConnection.reachability(afterFailedPing: notRunning), false)
+        XCTAssertEqual(GPGServiceConnection.reachability(afterFailedPing: invalidated), false)
+    }
+
     /// An invalidated connection is replaced once, after the retry delay.
     func testInvalidationReconnectsOnce() async throws {
         start()

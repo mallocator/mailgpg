@@ -92,15 +92,16 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
         // The fixed ping() fails fast when the host app is offline (sub-second).
         Task {
-            let available: Bool
+            let available: Bool?
             do {
                 _ = try await GPGService.shared.ping()
                 available = true
             } catch {
-                available = false
+                available = GPGServiceConnection.reachability(afterFailedPing: error)
             }
             HostAppReachability.shared.isAvailable = available
-            completionHandler(Self.encodingStatus(hostAvailable: available, policy: policy))
+            // Unknown answers optimistically, as the callers that didn't ping do.
+            completionHandler(Self.encodingStatus(hostAvailable: available ?? true, policy: policy))
         }
     }
 

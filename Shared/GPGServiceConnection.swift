@@ -113,6 +113,21 @@ nonisolated final class GPGServiceConnection: @unchecked Sendable {
         return typed
     }
 
+    /// Whether a failed ping says the host app is reachable: `nil` (unknown)
+    /// for an interruption, `false` for anything else.
+    ///
+    /// A ping in flight when the host app restarts fails with an interruption.
+    /// The connection survives it, and its interruption handler already set
+    /// reachability to unknown; the ping's result can land after that, and a
+    /// `false` then would never be reset.
+    static func reachability(afterFailedPing error: Error) -> Bool? {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain && nsError.code == NSXPCConnectionInterrupted {
+            return nil
+        }
+        return false
+    }
+
     // MARK: - Connection management
 
     private func connect() {
