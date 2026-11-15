@@ -52,8 +52,8 @@ actor GPGService {
             Self.defaults?.set(Self.defaultKeyservers, forKey: "keyservers")
         }
         // Permanently wire connection availability changes to HostAppReachability.
-        // true  = connect() called optimistically → nil (re-checking, not confirmed yet)
-        // false = connection failed / host app quit → false (confirmed unavailable)
+        // true  = connected, or interrupted and reconnecting → nil (re-checking, not confirmed yet)
+        // false = connection invalidated / host app quit → false (confirmed unavailable)
         connection.onAvailabilityChanged = { available in
             HostAppReachability.shared.isAvailable = available ? nil : false
         }
