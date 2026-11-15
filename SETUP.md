@@ -299,6 +299,31 @@ the passphrase, reopen the message, and it shows decrypted with no second
 prompt. Quitting the host app while the prompt is up should show the raw
 message at once.
 
+## The send path fails closed
+
+**Every recipient needs a key** (`Shared/OutgoingMessage.swift`) — `encode`
+refused only recipients marked as missing, loading or changed, so an address
+added just before Send, with no status entry yet, went out without its key, and
+with no compose state at all the message was encrypted to the sender alone or
+to another window's recipients. Every To, Cc and Bcc address now needs a key the
+compose window resolved, and only the window's own state counts: the
+single-window fallback still decides what is offered, never whom to encrypt to.
+
+**Encode cache** — keyed on the message UUID alone, so after a failed send an
+edit, a new recipient or toggling encryption still sent the old ciphertext. The
+key now includes the flags, the addresses, the fingerprints and a hash of the
+message without `Date`, `Message-Id` and `X-Apple-*`.
+
+**Nothing to encode** — with no message data and signing or encryption on,
+`encode` returned neither a message nor an error, and Mail presumably sent the
+plaintext. It now returns an error.
+
+Checked in Mail 16.0 on 2026-11-15: a Cc typed and sent at once went out
+encrypted to it too; its key resolved before `encode`, so "Still looking up
+keys" did not appear. Send Later encodes when you press Schedule, while the
+window and its state still exist, and the queued copy is already ciphertext:
+it went out encrypted to everyone, with no second `encode` at delivery.
+
 ## Known gap: a failed decryption explains nothing
 
 When decryption fails — you do not hold the key, the ciphertext is damaged —

@@ -80,14 +80,6 @@ final class ComposeSessionState: ObservableObject {
     }
 }
 
-enum RecipientKeyStatus: Equatable {
-    case found
-    case notFound
-    /// A key exists, but it is not the one last used for this address.
-    case keyChanged
-    case loading
-}
-
 // MARK: - View
 
 struct ComposeSecurityView: View {

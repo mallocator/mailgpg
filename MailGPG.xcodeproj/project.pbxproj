@@ -26,6 +26,8 @@
 		3A4E0000000000000000B003 /* DecodeCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A4E0000000000000000B001 /* DecodeCache.swift */; };
 		3A4E0000000000000000C002 /* XPCReply.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A4E0000000000000000C001 /* XPCReply.swift */; };
 		3A4E0000000000000000C003 /* XPCReply.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A4E0000000000000000C001 /* XPCReply.swift */; };
+		3A4E0000000000000000D002 /* OutgoingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A4E0000000000000000D001 /* OutgoingMessage.swift */; };
+		3A4E0000000000000000D003 /* OutgoingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A4E0000000000000000D001 /* OutgoingMessage.swift */; };
 		B865AAE3664A45DB8D022CEA /* TrustLevel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E740A487D0E04695BEC7B959 /* TrustLevel.swift */; };
 		C44923A61DF642298128C68C /* TrustLevel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E740A487D0E04695BEC7B959 /* TrustLevel.swift */; };
 		4A0000000000000000000002 /* net.pyxzl.mailgpg.plist in Copy Launch Agent */ = {isa = PBXBuildFile; fileRef = 4A0000000000000000000001 /* net.pyxzl.mailgpg.plist */; };
@@ -90,6 +92,7 @@
 		AABB00CC00CCAABB00CC00CC /* MailGPG.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = MailGPG.xctestplan; sourceTree = "<group>"; };
 		AC70000000000000000AC001 /* AutocryptHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutocryptHeader.swift; sourceTree = "<group>"; };
 		3A4E0000000000000000A001 /* RawMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawMessage.swift; sourceTree = "<group>"; };
+		3A4E0000000000000000D001 /* OutgoingMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingMessage.swift; sourceTree = "<group>"; };
 		3A4E0000000000000000B001 /* DecodeCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecodeCache.swift; sourceTree = "<group>"; };
 		3A4E0000000000000000C001 /* XPCReply.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XPCReply.swift; sourceTree = "<group>"; };
 		E740A487D0E04695BEC7B959 /* TrustLevel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustLevel.swift; sourceTree = "<group>"; };
@@ -164,6 +167,7 @@
 				AC70000000000000000AC001 /* AutocryptHeader.swift */,
 				3A4E0000000000000000A001 /* RawMessage.swift */,
 				3A4E0000000000000000B001 /* DecodeCache.swift */,
+				3A4E0000000000000000D001 /* OutgoingMessage.swift */,
 				3A4E0000000000000000C001 /* XPCReply.swift */,
 			);
 			path = Shared;
@@ -384,6 +388,7 @@
 				3A4E0000000000000000A002 /* RawMessage.swift in Sources */,
 				3A4E0000000000000000B002 /* DecodeCache.swift in Sources */,
 				3A4E0000000000000000C002 /* XPCReply.swift in Sources */,
+				3A4E0000000000000000D002 /* OutgoingMessage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -401,6 +406,7 @@
 				3A4E0000000000000000A003 /* RawMessage.swift in Sources */,
 				3A4E0000000000000000B003 /* DecodeCache.swift in Sources */,
 				3A4E0000000000000000C003 /* XPCReply.swift in Sources */,
+				3A4E0000000000000000D003 /* OutgoingMessage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

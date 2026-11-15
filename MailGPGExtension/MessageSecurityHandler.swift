@@ -13,10 +13,11 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
     /// Two caches, deliberately keyed differently — they answer different questions.
     ///
-    /// `encodeCache` is keyed by message UUID because Mail calls encode() up to
+    /// `encodeCache` is keyed by message UUID plus everything that decides the
+    /// output (`OutgoingMessage.cacheKey`), because Mail calls encode() up to
     /// three times for the same logical message (send, auto-save, Sent copy)
-    /// with slightly different rawData each time; the UUID is what makes those
-    /// calls recognisable as one message, and only the first should hit GPG.
+    /// with slightly different rawData each time; only the first should hit
+    /// GPG, and an edited message must not get the old ciphertext back.
     ///
     /// `decodeCache` is keyed by a hash of the message bytes, and only PGP
     /// messages ever reach it — see `decodedMessage` on why detection comes
@@ -194,20 +195,14 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
         guard let body = message.rawData else {
             log.error("encode: message.rawData is nil — cannot sign/encrypt")
-            completionHandler(MEMessageEncodingResult(encodedMessage: nil, signingError: nil, encryptionError: nil))
+            let errors = OutgoingMessage.missingDataErrors(shouldSign: shouldSign, shouldEncrypt: shouldEncrypt)
+            completionHandler(MEMessageEncodingResult(
+                encodedMessage: nil, signingError: errors.signing, encryptionError: errors.encryption))
             return
         }
 
         log.info("encode: rawData size=\(body.count) bytes")
 
-        // UUID-based cache: return a previous encode result for subsequent calls
-        // with the same message UUID. This reduces 3 GPG calls to 1.
-        // IMPORTANT: Skip caching for auto-saved drafts — they contain partial data
-        // (X-Apple-Mail-Remote-Attachments: YES means attachments are server-side
-        // references, not inlined). If we cache the draft result, the actual send
-        // (which has full attachments inlined → much larger rawData) would get the
-        // smaller draft result back, causing Mail to freeze.
-        let messageUUID = header("x-universally-unique-identifier", in: message)
         // Auto-saved drafts have X-Apple-Mail-Remote-Attachments: YES — attachments
         // are server-side references, not inlined. Encrypting this partial message
         // wastes a large GPG call and the encrypted draft body is useless (attachment
@@ -220,96 +215,52 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
             completionHandler(MEMessageEncodingResult(encodedMessage: nil, signingError: nil, encryptionError: nil))
             return
         }
-        let cachedEncode = cachedEncodeResult(for: messageUUID)
-        if let cached = cachedEncode {
-            log.info("encode: UUID cache hit (\(body.count) bytes)")
-            completionHandler(cached)
-            return
-        }
 
         // `rawString` is the full RFC 2822 form — "Ravi <ravi@example.com>",
         // display name and angle brackets included. Comparing that to a key's
         // bare email never matches when a display name is present. Use the
         // same normalisation the recipient lookup uses.
         let senderEmail  = message.fromAddress.bareAddress
-        let state = sessionState(for: message)
-        let keysByEmail = state?.recipientKeys ?? [:]
+        let visibleAddresses = (message.toAddresses + message.ccAddresses).map(\.bareAddress)
+        let blindAddresses = message.bccAddresses.map(\.bareAddress)
 
         // Split visible from blind recipients. OpenPGP stamps a key ID into the
         // packet for every recipient, and every recipient can read that list —
         // so encrypting to a BCC address the ordinary way tells the whole To
         // line who else received it. Those go in as hidden recipients instead.
-        let visibleEmails = Set((message.toAddresses + message.ccAddresses).map(\.bareAddress))
-        let bccEmails = Set(message.bccAddresses.map(\.bareAddress)).subtracting(visibleEmails)
-        let matchedVisible = visibleEmails.compactMap { keysByEmail[$0]?.fingerprint }
-        // A key carrying several UIDs can serve both a visible and a blind
-        // address; keeping it visible is correct, so drop the duplicate.
-        let hiddenFingerprints = bccEmails
-            .compactMap { keysByEmail[$0]?.fingerprint }
-            .filter { !matchedVisible.contains($0) }
-        // Defensive: if address matching found nothing but we do hold keys,
-        // fall back to the old behaviour rather than silently encrypting to
-        // no one. Losing BCC privacy beats failing to send.
-        let visibleFingerprints = (matchedVisible.isEmpty && hiddenFingerprints.isEmpty)
-            ? keysByEmail.values.map(\.fingerprint)
-            : matchedVisible
-
-        // Check if encryption is requested but some recipients are missing keys.
+        var recipients = OutgoingMessage.Recipients()
         if shouldEncrypt {
-            let allRecipients = message.toAddresses + message.ccAddresses + message.bccAddresses
-            let missingEmails = allRecipients
-                .map { $0.bareAddress }
-                .filter { state?.recipientKeyStatus[$0] == .notFound }
-            let loadingEmails = allRecipients
-                .map { $0.bareAddress }
-                .filter { state?.recipientKeyStatus[$0] == .loading }
-
-            let changedEmails = allRecipients
-                .map { $0.bareAddress }
-                .filter { state?.recipientKeyStatus[$0] == .keyChanged }
-
-            if !changedEmails.isEmpty {
-                let list = changedEmails.joined(separator: ", ")
-                log.error("encode: refusing to encrypt — \(changedEmails.count) recipient key(s) changed")
+            // Only this window's own state: another window's keys are another
+            // message's recipients.
+            let state = sessionState(for: message, fallBackToSingleWindow: false)
+            switch OutgoingMessage.recipients(
+                visible: visibleAddresses, blind: blindAddresses,
+                status: state?.recipientKeyStatus,
+                fingerprints: (state?.recipientKeys ?? [:]).mapValues(\.fingerprint)) {
+            case .success(let resolved):
+                recipients = resolved
+            case .failure(let problem):
+                log.error("encode: refusing to encrypt — \(String(describing: problem), privacy: .private)")
                 completionHandler(MEMessageEncodingResult(
-                    encodedMessage: nil,
-                    signingError: nil,
-                    encryptionError: NSError(
-                        domain: "net.pyxzl.mailgpg", code: 5,
-                        userInfo: [NSLocalizedDescriptionKey:
-                            "The public key for these recipients is not the one used before:\n\(list)\n\n"
-                          + "This is what key substitution looks like. Confirm the new key's "
-                          + "fingerprint with the recipient through another channel, then mark it "
-                          + "verified in Manage Keys to accept it."])))
+                    encodedMessage: nil, signingError: nil,
+                    encryptionError: Self.encryptionError(for: problem)))
                 return
             }
+        }
 
-            if !missingEmails.isEmpty {
-                let list = missingEmails.joined(separator: ", ")
-                log.error("encode: encryption requested but \(missingEmails.count) recipient key(s) are missing")
-                completionHandler(MEMessageEncodingResult(
-                    encodedMessage: nil,
-                    signingError: nil,
-                    encryptionError: NSError(
-                        domain: "net.pyxzl.mailgpg", code: 3,
-                        userInfo: [NSLocalizedDescriptionKey:
-                            "The following recipients don't have a public key:\n\(list)\n\n" +
-                            "Turn off encryption to send without it, or add the missing keys."])))
-                return
-            }
-
-            if !loadingEmails.isEmpty {
-                let list = loadingEmails.joined(separator: ", ")
-                log.warning("encode: key lookup still in progress for \(loadingEmails.count) recipient(s)")
-                completionHandler(MEMessageEncodingResult(
-                    encodedMessage: nil,
-                    signingError: nil,
-                    encryptionError: NSError(
-                        domain: "net.pyxzl.mailgpg", code: 4,
-                        userInfo: [NSLocalizedDescriptionKey:
-                            "Still looking up keys for:\n\(list)\n\nPlease try again in a moment."])))
-                return
-            }
+        // Mail calls encode() up to three times for one message (send,
+        // auto-save, Sent copy); only the first should hit GPG. The key holds
+        // everything that decides the output, so an edited or re-addressed
+        // message after a failed send is encoded afresh.
+        let cacheKey = OutgoingMessage.cacheKey(
+            messageUUID: header("x-universally-unique-identifier", in: message),
+            shouldSign: shouldSign, shouldEncrypt: shouldEncrypt,
+            addresses: visibleAddresses + blindAddresses.map { "bcc:" + $0 },
+            recipients: recipients, rawData: body)
+        if let cached = cachedEncodeResult(for: cacheKey) {
+            log.info("encode: cache hit (\(body.count) bytes)")
+            completionHandler(cached)
+            return
         }
 
         Task {
@@ -353,7 +304,7 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 // decryptable. Without this, Mail's indexer calls decodedMessage on
                 // the sent message, decryption fails, and the error triggers a KVO
                 // re-entrancy crash in Mail.app.
-                var encryptFingerprints = visibleFingerprints
+                var encryptFingerprints = recipients.visible
                 if shouldEncrypt, let sk = ownKeyForSentCopy {
                     encryptFingerprints.append(sk.fingerprint)
                     log.info("encode: added sender key to encryption recipients")
@@ -371,12 +322,12 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                     log.info("encode: signing with selected sender key")
 
                     if shouldEncrypt {
-                        log.info("encode: sign+encrypt to \(encryptFingerprints.count) recipient(s), \(hiddenFingerprints.count) hidden")
+                        log.info("encode: sign+encrypt to \(encryptFingerprints.count) recipient(s), \(recipients.hidden.count) hidden")
                         encodedData = MEEncodedOutgoingMessage(
                             rawData: try await GPGService.shared.signAndEncrypt(
                                 data: body, signerKeyID: signerKey.fingerprint,
                                 recipientFingerprints: encryptFingerprints,
-                                hiddenRecipientFingerprints: hiddenFingerprints),
+                                hiddenRecipientFingerprints: recipients.hidden),
                             isSigned: true, isEncrypted: true)
                         log.info("encode: sign+encrypt succeeded")
                     } else {
@@ -387,11 +338,11 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                         log.info("encode: sign succeeded")
                     }
                 } else {
-                    log.info("encode: encrypt-only to \(encryptFingerprints.count) recipient(s), \(hiddenFingerprints.count) hidden")
+                    log.info("encode: encrypt-only to \(encryptFingerprints.count) recipient(s), \(recipients.hidden.count) hidden")
                     encodedData = MEEncodedOutgoingMessage(
                         rawData: try await GPGService.shared.encrypt(
                             data: body, recipientFingerprints: encryptFingerprints,
-                            hiddenRecipientFingerprints: hiddenFingerprints),
+                            hiddenRecipientFingerprints: recipients.hidden),
                         isSigned: false, isEncrypted: true)
                     log.info("encode: encrypt succeeded")
                 }
@@ -401,19 +352,19 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
                 // Evidence for next time: these addresses demonstrably accept
                 // encrypted mail from us.
                 if shouldEncrypt {
-                    for email in visibleEmails.union(bccEmails) {
+                    for email in Set(visibleAddresses + blindAddresses) where !email.isEmpty {
                         GPGService.shared.recordEncryptedSend(to: email)
                     }
                 }
 
                 let encodeResult = MEMessageEncodingResult(encodedMessage: encodedData, signingError: nil, encryptionError: nil)
 
-                // Store in UUID cache: both the encode result (so subsequent
-                // encode calls for the same message return instantly) and a
-                // pre-built decoded message (so decodedMessage() on the encrypted
-                // output also returns instantly without a GPG decrypt).
-                if let uuid = messageUUID {
-                    self.storeEncodeResult(encodeResult, for: uuid)
+                // Cache both the encode result (so subsequent encode calls for
+                // the same message return instantly) and a pre-built decoded
+                // message (so decodedMessage() on the encrypted output also
+                // returns instantly without a GPG decrypt).
+                if let cacheKey {
+                    self.storeEncodeResult(encodeResult, for: cacheKey)
                 }
                 // Pre-build the decoded form so Mail's indexer does not decrypt
                 // the Sent copy we just produced. Keyed by the hash of the
@@ -451,14 +402,43 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
 
     /// Finds the ComposeSessionState for an outgoing message by reading the
     /// X-MailGPG-SessionID header that ComposeSessionHandler injects.
-    /// Falls back to singleActiveState so single-window use always works.
+    /// Without the header it can fall back to singleActiveState, which is good
+    /// enough for deciding what to offer and never for choosing keys.
     /// Uses case-insensitive lookup because Mail normalises header capitalisation.
-    private func sessionState(for message: MEMessage) -> ComposeSessionState? {
+    private func sessionState(for message: MEMessage, fallBackToSingleWindow: Bool = true) -> ComposeSessionState? {
         if let idString = header("x-mailgpg-sessionid", in: message),
            let uuid = UUID(uuidString: idString) {
             return ComposeStateStore.shared.state(for: uuid)
         }
-        return ComposeStateStore.shared.singleActiveState
+        return fallBackToSingleWindow ? ComposeStateStore.shared.singleActiveState : nil
+    }
+
+    private static func encodeError(code: Int, _ description: String) -> NSError {
+        NSError(domain: "net.pyxzl.mailgpg", code: code,
+                userInfo: [NSLocalizedDescriptionKey: description])
+    }
+
+    private static func encryptionError(for problem: OutgoingMessage.RecipientProblem) -> NSError {
+        switch problem {
+        case .keyChanged(let emails):
+            return encodeError(code: 5,
+                "The public key for these recipients is not the one used before:\n\(emails.joined(separator: ", "))\n\n"
+              + "This is what key substitution looks like. Confirm the new key's "
+              + "fingerprint with the recipient through another channel, then mark it "
+              + "verified in Manage Keys to accept it.")
+        case .missingKeys(let emails):
+            return encodeError(code: 3,
+                "The following recipients don't have a public key:\n\(emails.joined(separator: ", "))\n\n"
+              + "Turn off encryption to send without it, or add the missing keys.")
+        case .stillLoading(let emails):
+            return encodeError(code: 4,
+                "Still looking up keys for:\n\(emails.joined(separator: ", "))\n\nPlease try again in a moment.")
+        case .noComposeState:
+            return encodeError(code: 7,
+                "MailGPG cannot tell which keys this message was meant for, because its compose "
+              + "window is gone. Open the message as a draft and send it from there, or turn off "
+              + "encryption.")
+        }
     }
 
     /// Case-insensitive header lookup.
