@@ -21,6 +21,20 @@ extension GPGServiceImpl {
         }
     }
 
+    func fetchKey(keyID: String,
+                  reply: @escaping (Data?, Error?) -> Void) {
+        do {
+            let keyID = try validatedKeyIdentifier(keyID, fieldName: "key ID")
+            if let key = try resolveKey(keyID: keyID) {
+                reply(try xpcEncode(key), nil)
+            } else {
+                reply(nil, nil)
+            }
+        } catch {
+            reply(nil, error as NSError)
+        }
+    }
+
     /// Resolve a key by email address and/or key ID.
     ///
     /// Lookup order:

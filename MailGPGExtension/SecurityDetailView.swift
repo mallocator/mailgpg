@@ -44,9 +44,7 @@ struct SecurityDetailView: View {
 
             case .keyNotFound(let keyID):
                 LabeledRow(label: "Key ID", value: keyID)
-                Text("The signing key was not found in your local keychain and could not be retrieved from a keyserver.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                FetchKeyRow(keyID: keyID)
 
             case .plain:
                 Text("This message was sent without OpenPGP encryption or signing.")
@@ -139,6 +137,70 @@ private struct SignerRow: View {
         .padding(8)
         .background(.quaternary)
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// Looks the missing signer key up on the keyservers when the reader asks.
+/// MailGPG never does so on its own: the lookup tells the keyserver when and
+/// from where the message was read.
+private struct FetchKeyRow: View {
+    let keyID: String
+
+    private enum Outcome { case idle, fetching, fetched, notFound, failed(String) }
+    @State private var outcome = Outcome.idle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if showsButton {
+                Button("Fetch Key") { fetch() }
+                    .disabled(isFetching)
+            }
+        }
+    }
+
+    private var message: String {
+        switch outcome {
+        case .idle, .fetching:
+            return "The signing key is not in your keychain. Fetching it asks your keyservers for it,"
+                + " and tells them you are reading a message signed with it."
+        case .fetched:
+            return "Key imported. Open the message again to check its signature."
+        case .notFound:
+            return "None of your keyservers has this key."
+        case .failed(let reason):
+            return "Could not fetch the key: \(reason)"
+        }
+    }
+
+    private var isFetching: Bool {
+        if case .fetching = outcome { return true }
+        return false
+    }
+
+    private var showsButton: Bool {
+        guard keyID != "unknown" else { return false }
+        if case .fetched = outcome { return false }
+        return true
+    }
+
+    private func fetch() {
+        outcome = .fetching
+        Task {
+            do {
+                if try await GPGService.shared.fetchKey(keyID: keyID) != nil {
+                    MessageSecurityHandler.shared.clearDecodeCache()
+                    outcome = .fetched
+                } else {
+                    outcome = .notFound
+                }
+            } catch {
+                outcome = .failed(error.localizedDescription)
+            }
+        }
     }
 }
 

@@ -100,6 +100,16 @@ import Foundation
         reply: @escaping (_ keyInfoJSON: Data?, Error?) -> Void
     )
 
+    /// Fetch the key with `keyID` from the configured keyservers, at the
+    /// reader's request: a signature by a key missing locally. Never called on
+    /// its own when a mail opens, since a lookup tells a keyserver when and
+    /// from where the mail was read. Returns a JSON-encoded `KeyInfo`, or
+    /// `nil` data (+ no error) when no keyserver has the key.
+    func fetchKey(
+        keyID: String,
+        reply: @escaping (_ keyInfoJSON: Data?, Error?) -> Void
+    )
+
     /// List all secret keys available for signing.
     /// Returns a JSON-encoded `[KeyInfo]`.
     func listSecretKeys(

@@ -39,15 +39,9 @@ final class GPGServiceListener: NSObject, NSXPCListenerDelegate {
         shouldAcceptNewConnection connection: NSXPCConnection
     ) -> Bool {
 
-        // Security check: only accept connections from our own extension.
-        // Without this, any app on the machine could ask us to run GPG.
-        guard isConnectionFromOurExtension(connection) else {
-            // Worth an error rather than a debug line: on a healthy machine this
-              // never happens, and when it does it is either a broken install or
-              // something local trying to use our keys.
-            log.error("rejected XPC connection from a client that does not match our signing identity")
-            return false
-        }
+        // Security check: only our own extension may talk to us. Without it,
+        // any app on the machine could ask us to run GPG.
+        Self.requireOurExtension(connection)
 
         // Tell XPC what protocol the remote side (extension) can call on us.
         connection.exportedInterface = NSXPCInterface(with: GPGXPCProtocol.self)
@@ -58,53 +52,37 @@ final class GPGServiceListener: NSObject, NSXPCListenerDelegate {
         // Must call resume() or the connection stays suspended and nothing works.
         connection.resume()
 
-        log.info("accepted XPC connection from the Mail extension")
+        log.info("accepted XPC connection, open to the Mail extension only")
         return true
     }
 
     // MARK: - Security validation
 
-    private func isConnectionFromOurExtension(_ connection: NSXPCConnection) -> Bool {
-        // We validate the connecting process by its code-signing identity.
-        // `processIdentifier` gives us the PID; we hand that to the Security
-        // framework which looks up the running process and checks its signature.
-        //
-        // Note: PID-based lookup has a theoretical TOCTOU race (the process
-        // could be replaced between connection and validation), but this is
-        // acceptable for validating our own extension on the same machine.
-        // A bundle identifier on its own is a self-declared string: ANY binary,
-        // ad-hoc signed by anyone, can claim it and satisfy `identifier "..."`.
-        // Without the anchor and team-ID clauses below, any process running as
-        // the user could open this Mach service and use it as a signing and
-        // decryption oracle — silently, because gpg-agent caches the passphrase.
-        //
-        //   anchor apple generic  → the cert chain really is an Apple-issued one
-        //   subject.OU            → the leaf cert belongs to our Developer team
-        //
-        // Both "Apple Development" and "Developer ID Application" certificates
-        // carry the team ID in the leaf OU, so this holds for local debug builds
-        // and notarised release builds alike.
-        let requirement = """
-            identifier "net.pyxzl.MailGPG.MailGPGExtension" \
-            and anchor apple generic \
-            and certificate leaf[subject.OU] = "3HKD37M482"
-            """
-        let pid = connection.processIdentifier
+    /// A bundle identifier on its own is a self-declared string: ANY binary,
+    /// ad-hoc signed by anyone, can claim it and satisfy `identifier "..."`.
+    /// Without the anchor and team-ID clauses below, any process running as
+    /// the user could open this Mach service and use it as a signing and
+    /// decryption oracle — silently, because gpg-agent caches the passphrase.
+    ///
+    ///   anchor apple generic  → the cert chain really is an Apple-issued one
+    ///   subject.OU            → the leaf cert belongs to our Developer team
+    ///
+    /// Both "Apple Development" and "Developer ID Application" certificates
+    /// carry the team ID in the leaf OU, so this holds for local debug builds
+    /// and notarised release builds alike.
+    static let extensionRequirement = """
+        identifier "net.pyxzl.MailGPG.MailGPGExtension" \
+        and anchor apple generic \
+        and certificate leaf[subject.OU] = "3HKD37M482"
+        """
 
-        var secCode: SecCode?
-        let attrs = [kSecGuestAttributePid: pid] as CFDictionary
-
-        guard SecCodeCopyGuestWithAttributes(nil, attrs, [], &secCode) == errSecSuccess,
-              let code = secCode else {
-            return false
-        }
-
-        var secRequirement: SecRequirement?
-        guard SecRequirementCreateWithString(requirement as CFString, [], &secRequirement) == errSecSuccess,
-              let req = secRequirement else {
-            return false
-        }
-
-        return SecCodeCheckValidity(code, [], req) == errSecSuccess
+    /// Let `connection` deliver messages only from a peer that satisfies
+    /// `extensionRequirement`. XPC checks the peer's audit token on every message, so
+    /// unlike a lookup by PID, a reused PID or an exec after connecting does
+    /// not pass. A peer that fails gets its connection invalidated before any
+    /// call reaches us; on a healthy machine that is a broken install or
+    /// something local trying to use our keys.
+    static func requireOurExtension(_ connection: NSXPCConnection) {
+        connection.setCodeSigningRequirement(extensionRequirement)
     }
 }

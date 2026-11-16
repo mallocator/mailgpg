@@ -22,10 +22,15 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
     /// Overrides the stored pinned recipient keys. Testing only.
     private let pinnedKeysOverride: [String: String]?
 
-    init(gnupgHome: String? = nil, protectSubject: Bool? = nil, pinnedKeys: [String: String]? = nil) {
+    /// Overrides the stored keyserver list. Testing only.
+    private let keyserversOverride: [String]?
+
+    init(gnupgHome: String? = nil, protectSubject: Bool? = nil, pinnedKeys: [String: String]? = nil,
+         keyservers: [String]? = nil) {
         self.gnupgHome = gnupgHome
         self.protectSubjectOverride = protectSubject
         self.pinnedKeysOverride = pinnedKeys
+        self.keyserversOverride = keyservers
         super.init()
     }
 
@@ -67,7 +72,7 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
     /// Returns the current keyserver list from shared UserDefaults.
     /// The extension seeds the defaults on first launch, so this should never be empty.
     func currentKeyservers() -> [String] {
-        Self.defaults?.stringArray(forKey: "keyservers") ?? []
+        keyserversOverride ?? Self.defaults?.stringArray(forKey: "keyservers") ?? []
     }
 
     // MARK: - Subprocess helper
@@ -383,8 +388,10 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
         do {
             if gnupgHome == nil { try GPGAgent.ensureRunning() }
             let payload = extractPGPPayload(from: data)
+            // --no-auto-key-retrieve here and in verify: a gpg.conf with
+            // auto-key-retrieve would look up an unknown signer key on its own.
             let (plaintext, stderr, statusText, code) = try gpgWithStatus(
-                ["--decrypt", "--batch", "--yes"],
+                ["--decrypt", "--batch", "--yes", "--no-auto-key-retrieve"],
                 input: payload)
             // GPG exits non-zero (2) when the embedded signature can't be
             // verified (e.g. sender's public key not in keychain), even though
@@ -396,24 +403,10 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
                 throw GPGXPCError.make(.gpgFailed,
                     message: "gpg decrypt failed (exit \(code)): \(stderr)")
             }
-            var status = parseDecryptStatus(status: statusText)
-
-            // If the embedded signature couldn't be verified due to a missing
-            // public key, try to fetch the sender's key and re-run the decrypt
-            // so we get a real GOODSIG/BADSIG result.
-            if case .keyNotFound(let missingKeyID) = status {
-                let senderEmail = extractFromEmail(from: data)
-                let fallbackKeyID = missingKeyID != "unknown" ? missingKeyID : nil
-                let keyFetched = (try? resolveKey(email: senderEmail, keyID: fallbackKeyID)) != nil
-
-                if keyFetched {
-                    let (_, _, statusText2, _) = try gpgWithStatus(
-                        ["--decrypt", "--batch", "--yes"],
-                        input: payload)
-                    status = parseDecryptStatus(status: statusText2)
-                    log.info("decrypt: re-verified after key fetch")
-                }
-            }
+            // A signer key missing locally stays missing: looking it up would
+            // tell the sender's domain (WKD) or a keyserver when and from where
+            // the mail was read. The reader fetches it from the details sheet.
+            let status = parseDecryptStatus(status: statusText)
 
             // MEDecodedMessage requires a complete RFC 2822 message (headers + body).
             // GPG only returns the decrypted payload bytes; we must reconstruct
@@ -439,7 +432,7 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
         var kept: [(filename: String, data: Data)] = []
         for attachment in encryptedAttachments(in: data, excluding: body) {
             let (plaintext, _, statusText, code) = try gpgWithStatus(
-                ["--decrypt", "--batch", "--yes"], input: attachment.payload)
+                ["--decrypt", "--batch", "--yes", "--no-auto-key-retrieve"], input: attachment.payload)
             guard code == 0 || hasStatus("DECRYPTION_OKAY", in: statusText),
                   case .encrypted(let signers) = parseDecryptStatus(status: statusText),
                   required.isSubset(of: Set(signers.map(\.fingerprint))) else {
@@ -470,7 +463,7 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
             }
 
             let (_, _, statusText, _) = try gpgWithStatus(
-                ["--verify", "--batch", sigURL.path, "-"],
+                ["--verify", "--batch", "--no-auto-key-retrieve", sigURL.path, "-"],
                 input: data)
             let status = enrichFromKeyring(parseVerifyStatus(status: statusText))
             reply(try xpcEncode(status), nil)

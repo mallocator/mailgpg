@@ -166,9 +166,12 @@ log stream --predicate 'subsystem == "net.pyxzl.mailgpg"' --level debug
 
 ## What's different in this fork
 
-Security fixes: the XPC gate is pinned to the signing team, so a local process
-can no longer claim the extension's bundle identifier and use the helper as a
-signing and decryption oracle; GPG status is parsed from a private file rather
+Security fixes: the XPC gate is pinned to the signing team and checked by XPC on
+every message rather than once by PID, so a local process can no longer claim
+the extension's bundle identifier and use the helper as a signing and decryption
+oracle; opening a mail signed by an unknown key no longer looks the key up,
+which told the sender's domain or a keyserver when and from where it was read:
+the details sheet has a Fetch Key button instead; GPG status is parsed from a private file rather
 than stderr, which carries attacker-chosen user IDs; recipient keys are pinned
 on first use so a substituted key stops the send; a recipient's key must carry
 their exact address, where gpg's own lookup also returns

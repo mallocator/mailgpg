@@ -195,6 +195,25 @@ actor GPGService {
         }
     }
 
+    /// Fetch the key with `keyID` from the keyservers; nil when none has it.
+    /// Only on the reader's request: see `GPGXPCProtocol.fetchKey`.
+    func fetchKey(keyID: String) async throws -> KeyInfo? {
+        try await call { proxy, relay in
+            proxy.fetchKey(keyID: keyID) { keyInfoJSON, error in
+                if let error { relay.resume(throwing: error); return }
+                guard let keyInfoJSON else {
+                    relay.resume(returning: Optional<KeyInfo>.none)
+                    return
+                }
+                do {
+                    relay.resume(returning: try xpcDecode(KeyInfo.self, from: keyInfoJSON))
+                } catch {
+                    relay.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     func listSecretKeys() async throws -> [KeyInfo] {
         try await call { proxy, relay in
             proxy.listSecretKeys { keyListJSON, error in

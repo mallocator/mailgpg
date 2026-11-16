@@ -318,22 +318,6 @@ extension GPGServiceImpl {
         }
     }
 
-    /// Extract the sender's email address from a raw RFC 2822 message's `From:` header.
-    /// Handles both `"Name <email>"` and plain `"email"` forms.
-    func extractFromEmail(from data: Data) -> String? {
-        let str = String(data: data, encoding: .utf8) ?? ""
-        for line in str.components(separatedBy: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.lowercased().hasPrefix("from:") else { continue }
-            let value = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            if let lt = value.firstIndex(of: "<"), let gt = value.firstIndex(of: ">"), lt < gt {
-                return String(value[value.index(after: lt)..<gt])
-            }
-            if value.contains("@") { return value }
-        }
-        return nil
-    }
-
     /// The keyword of a `[GNUPG:] KEYWORD args…` status line, or nil.
     ///
     /// Matched as a token, never as a substring: user IDs in GOODSIG and

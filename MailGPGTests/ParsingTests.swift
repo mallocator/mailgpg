@@ -566,28 +566,6 @@ final class ParsingTests: XCTestCase {
         }
     }
 
-    // MARK: - extractFromEmail
-
-    func testExtractFromEmail_angleFormat() {
-        let msg = "From: Alice Wonderland <alice@example.com>\nTo: bob@example.com\n\nHello"
-        XCTAssertEqual(svc.extractFromEmail(from: msg.data(using: .utf8)!), "alice@example.com")
-    }
-
-    func testExtractFromEmail_plainEmail() {
-        let msg = "From: alice@example.com\nTo: bob@example.com\n\nHello"
-        XCTAssertEqual(svc.extractFromEmail(from: msg.data(using: .utf8)!), "alice@example.com")
-    }
-
-    func testExtractFromEmail_noFromHeader() {
-        let msg = "To: bob@example.com\n\nHello"
-        XCTAssertNil(svc.extractFromEmail(from: msg.data(using: .utf8)!))
-    }
-
-    func testExtractFromEmail_caseInsensitive() {
-        let msg = "FROM: alice@example.com\n\nHello"
-        XCTAssertEqual(svc.extractFromEmail(from: msg.data(using: .utf8)!), "alice@example.com")
-    }
-
     // MARK: - parseImportedFingerprint
 
     func testParseImportedFingerprint_valid() {

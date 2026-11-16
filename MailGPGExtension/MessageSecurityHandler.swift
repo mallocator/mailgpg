@@ -69,6 +69,11 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         decodeCache.removeAll()
     }
 
+    /// Decode messages afresh, e.g. once a missing signer key was fetched.
+    func clearDecodeCache() {
+        decodeCache.removeAll()
+    }
+
     private nonisolated static func logNSError(_ error: NSError, prefix: StaticString) {
         log.error("\(prefix, privacy: .public) domain=\(error.domain, privacy: .public) code=\(error.code)")
     }
