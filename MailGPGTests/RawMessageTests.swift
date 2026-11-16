@@ -255,4 +255,25 @@ final class RawMessageTests: XCTestCase {
         let message = "From: a@example.com\nFrom: b@example.com\n\nHi"
         XCTAssertEqual(RawMessage.headerValues("From", in: Data(message.utf8)), ["a@example.com", "b@example.com"])
     }
+
+    // MARK: - Removing a header
+
+    func testRemovingHeader_dropsItAndItsContinuationAndLeavesTheRestAsIs() {
+        let message = "From: alice@example.com\r\nX-MailGPG-SessionID: 1234\r\n 5678\r\nSubject: Hi\r\n\r\n"
+            + "x-mailgpg-sessionid: in the body\r\n"
+        let result = RawMessage.removingHeader("x-mailgpg-sessionid", from: Data(message.utf8))
+        XCTAssertEqual(String(data: result, encoding: .utf8),
+                       "From: alice@example.com\r\nSubject: Hi\r\n\r\nx-mailgpg-sessionid: in the body\r\n")
+    }
+
+    func testRemovingHeader_LFAndLastHeader() {
+        let message = "From: alice@example.com\nX-MailGPG-SessionID: 1234\n\nHi"
+        let result = RawMessage.removingHeader("X-MailGPG-SessionID", from: Data(message.utf8))
+        XCTAssertEqual(String(data: result, encoding: .utf8), "From: alice@example.com\n\nHi")
+    }
+
+    func testRemovingHeader_absentHeaderLeavesTheBytesUnchanged() {
+        let message = Data("From: alice@example.com\r\nX-MailGPG-Sign: yes\r\n\r\n\u{FF}".utf8)
+        XCTAssertEqual(RawMessage.removingHeader("x-mailgpg-sessionid", from: message), message)
+    }
 }

@@ -112,6 +112,33 @@ nonisolated enum RawMessage {
         return out
     }
 
+    /// `message` without header `name` and its continuation lines. Everything
+    /// else, the body included, is the original bytes, so a message that is
+    /// sent as it is otherwise stays exactly that.
+    static func removingHeader(_ name: String, from message: Data) -> Data {
+        guard let blank = endOfHeaders(in: message) else { return message }
+        // The blank line's first half ends the last header line.
+        let end = message.index(blank.lowerBound, offsetBy: blank.count / 2)
+        let prefix = Data((name.lowercased() + ":").utf8)
+        var out = Data()
+        var skipping = false
+        var lineStart = message.startIndex
+        while lineStart < end {
+            let newline = message[lineStart..<end].firstIndex(of: UInt8(ascii: "\n"))
+            let lineEnd = newline.map { message.index(after: $0) } ?? end
+            let line = message[lineStart..<lineEnd]
+            let isContinuation = line.first == UInt8(ascii: " ") || line.first == UInt8(ascii: "\t")
+            if !isContinuation {
+                // ASCII lowercase; header names are letters, digits and "-".
+                skipping = Data(line.prefix(prefix.count).map { $0 | 0x20 }) == prefix
+            }
+            if !skipping { out.append(line) }
+            lineStart = lineEnd
+        }
+        out.append(message[end...])
+        return out
+    }
+
     // MARK: - Content-Type
 
     /// The message's own Content-Type value, unfolded; nil when there is none

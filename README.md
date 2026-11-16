@@ -99,7 +99,8 @@ those toggles directly, so what it can do is decline to offer them — and that
 is how this fork keeps signed mail away from people whose client would show it
 as a cryptic attachment.
 
-Signing and encryption are offered only to addresses with **evidence of PGP
+With **Only offer PGP to known correspondents** ticked in the compose panel,
+signing and encryption are offered only to addresses with **evidence of PGP
 use**:
 
 - they sent you mail carrying PGP, or an Autocrypt header
@@ -113,14 +114,17 @@ identical to one in daily use.
 
 Encryption additionally needs a usable key for every recipient. To start
 writing to someone who has never written to you, verify their key in **Manage
-Keys**. To switch the whole policy off, untick **Only offer PGP to known
-correspondents** in the compose panel.
+Keys**.
+
+The policy is off by default: it withholds a working feature on a guess about
+someone else's mail client, and when it guesses wrong the extension looks
+broken.
 
 ## Options
 
 All three live in the compose panel and are off, or conservative, by default.
 
-**Only offer PGP to known correspondents** — the policy above. On by default.
+**Only offer PGP to known correspondents** — the policy above. Off by default.
 
 **Attach my key (Autocrypt)** — adds your public key to outgoing mail as an
 `Autocrypt` header and harvests correspondents' keys from mail they send you,

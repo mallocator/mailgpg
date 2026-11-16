@@ -196,8 +196,18 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         log.info("encode called — shouldSign=\(shouldSign) shouldEncrypt=\(shouldEncrypt)")
 
         guard shouldSign || shouldEncrypt else {
-            log.info("encode: no sign/encrypt requested — passing through unchanged")
-            completionHandler(MEMessageEncodingResult(encodedMessage: nil, signingError: nil, encryptionError: nil))
+            // The session header is only for us; left in, it marks plain mail
+            // as sent with MailGPG.
+            guard header("x-mailgpg-sessionid", in: message) != nil, let raw = message.rawData else {
+                log.info("encode: no sign/encrypt requested — passing through unchanged")
+                completionHandler(MEMessageEncodingResult(encodedMessage: nil, signingError: nil, encryptionError: nil))
+                return
+            }
+            log.info("encode: no sign/encrypt requested — removing the session header only")
+            let plain = MEEncodedOutgoingMessage(
+                rawData: RawMessage.removingHeader("x-mailgpg-sessionid", from: raw),
+                isSigned: false, isEncrypted: false)
+            completionHandler(MEMessageEncodingResult(encodedMessage: plain, signingError: nil, encryptionError: nil))
             return
         }
 
