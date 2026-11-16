@@ -452,34 +452,30 @@ extension GPGServiceImpl {
 
     /// Find the text/plain part in a message, decode its content-transfer-encoding,
     /// and return the envelope headers, part content-type, and decoded body text.
-    /// Handles top-level text/plain and one level of multipart (alternative/mixed).
+    /// Looks at any depth of multipart (mixed > alternative is what most
+    /// clients send) and takes the first text/plain part holding an inline PGP
+    /// block, or else the first text/plain part.
     private func findTextPlainBody(in message: String) -> (envelopeHeaders: String, contentType: String, decodedBody: String)? {
-        let (headers, bodyData) = splitMessage(message.data(using: .utf8) ?? Data())
-        let body = String(data: bodyData, encoding: .utf8) ?? ""
+        let data = message.data(using: .utf8) ?? Data()
+        let parts = textPlainParts(in: data)
+        guard let part = parts.first(where: { inlinePGPRange(in: $0.decodedBody) != nil }) ?? parts.first
+        else { return nil }
+        return (splitMessage(data).headers, part.contentType, part.decodedBody)
+    }
+
+    /// Every text/plain part of a MIME entity, depth first, with its
+    /// content-type and decoded body.
+    private func textPlainParts(in entity: Data) -> [(contentType: String, decodedBody: String)] {
+        let (headers, bodyData) = splitMessage(entity)
         let ct = foldedHeaderValue("content-type", in: headers) ?? "text/plain; charset=utf-8"
-
-        if ct.lowercased().contains("multipart/"),
-           let boundary = headerParameter("boundary", in: ct) {
-            let delim = "--" + boundary
-            let parts = body.components(separatedBy: delim)
-            guard parts.count >= 3 else { return nil }
-            for idx in 1..<(parts.count - 1) {
-                var piece = parts[idx]
-                // Strip the leading newline(s) after the boundary delimiter
-                while piece.first == "\r" || piece.first == "\n" { piece.removeFirst() }
-                let (partHeaders, partBodyData) = splitMessage(piece.data(using: .utf8) ?? Data())
-                let partCT = foldedHeaderValue("content-type", in: partHeaders) ?? "text/plain; charset=utf-8"
-                guard partCT.lowercased().hasPrefix("text/plain") else { continue }
-                let cte = foldedHeaderValue("content-transfer-encoding", in: partHeaders)
-                let partBody = String(data: partBodyData, encoding: .utf8) ?? ""
-                return (headers, partCT, decodedTransferBody(partBody, encoding: cte))
-            }
-            return nil
+        if RawMessage.mediaType(of: ct).hasPrefix("multipart/") {
+            guard let boundary = headerParameter("boundary", in: ct) else { return [] }
+            return RawMessage.bodyParts(of: bodyData, boundary: boundary).flatMap { textPlainParts(in: $0) }
         }
-
-        guard ct.lowercased().hasPrefix("text/plain") else { return nil }
+        guard ct.lowercased().hasPrefix("text/plain") else { return [] }
         let cte = foldedHeaderValue("content-transfer-encoding", in: headers)
-        return (headers, ct, decodedTransferBody(body, encoding: cte))
+        let body = String(data: bodyData, encoding: .utf8) ?? ""
+        return [(ct, decodedTransferBody(body, encoding: cte))]
     }
 
     /// Extract the raw PGP ciphertext from an incoming message so GPG can decrypt it.

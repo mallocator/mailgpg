@@ -233,14 +233,35 @@ final class GPGCryptoTests: XCTestCase {
     /// An inline-PGP message with its attachments, as Enigmail sends it: the
     /// text part carries the armoured block, each attachment is encrypted on
     /// its own as `name.pgp`. `extraParts` are added verbatim.
-    private func inlineMessageWithAttachment(signed: Bool, attachment: Data,
-                                             extraParts: String = "") throws -> Data {
+    /// `nested` puts the text part in a multipart/alternative next to an
+    /// HTML part, the way Mail and most clients send it.
+    private func inlineMessageWithAttachment(signed: Bool, attachment: Data, extraParts: String = "",
+                                             nested: Bool = false) throws -> Data {
         var args = ["--trust-model", "always", "--encrypt", "--recipient", homedir.fingerprint]
         if signed { args += ["--sign", "--local-user", homedir.fingerprint] }
         let (armor, stderr, code) = try homedir.run(["--armor"] + args, input: Data("Inline secret body".utf8))
         XCTAssertEqual(code, 0, "gpg encrypt failed: \(stderr)")
         let (binary, stderr2, code2) = try homedir.run(args, input: attachment)
         XCTAssertEqual(code2, 0, "gpg encrypt failed: \(stderr2)")
+        var text = """
+            Content-Type: text/plain; charset=utf-8
+            Content-Transfer-Encoding: 7bit
+
+            \(String(data: armor, encoding: .utf8)!.trimmingCharacters(in: .whitespacesAndNewlines))
+            """
+        if nested {
+            text = """
+                Content-Type: multipart/alternative; boundary="ALT"
+
+                --ALT
+                \(text)
+                --ALT
+                Content-Type: text/html; charset=utf-8
+
+                <html><body><pre>encrypted</pre></body></html>
+                --ALT--
+                """
+        }
         let message = """
             From: \(homedir.email)
             To: \(homedir.email)
@@ -248,10 +269,7 @@ final class GPGCryptoTests: XCTestCase {
             Content-Type: multipart/mixed; boundary="MIXED"
 
             --MIXED
-            Content-Type: text/plain; charset=utf-8
-            Content-Transfer-Encoding: 7bit
-
-            \(String(data: armor, encoding: .utf8)!.trimmingCharacters(in: .whitespacesAndNewlines))
+            \(text)
             --MIXED
             Content-Type: application/octet-stream; name="report.pdf.pgp"
             Content-Disposition: attachment; filename="report.pdf.pgp"
@@ -293,6 +311,24 @@ final class GPGCryptoTests: XCTestCase {
         XCTAssertTrue(str.contains("filename=\"report.pdf\""), "plain=\(str)")
         XCTAssertTrue(str.contains(pdf.base64EncodedString()), "the attachment must be decrypted: \(str)")
         XCTAssertFalse(str.contains("report.pdf.pgp"), "plain=\(str)")
+    }
+
+    /// Inside multipart/mixed > multipart/alternative, the inline text part was
+    /// not found: the message became the decrypted text alone, without
+    /// `report.pdf.pgp`.
+    func testDecryptInlinePGP_nestedInAlternative_keepsTheDecryptedAttachment() throws {
+        let pdf = Data("%PDF-1.4 report bytes \u{00}\u{01}\u{02}".utf8)
+        let (plain, status) = try decrypt(inlineMessageWithAttachment(signed: true, attachment: pdf, nested: true))
+
+        guard case .encrypted(let signers) = status, signers.count == 1 else {
+            return XCTFail("Expected encrypted and signed, got \(status)")
+        }
+        let str = try XCTUnwrap(String(data: plain, encoding: .utf8))
+        XCTAssertTrue(str.lowercased().contains("content-type: multipart/mixed"), "plain=\(str)")
+        XCTAssertTrue(str.contains("Inline secret body"), "plain=\(str)")
+        XCTAssertTrue(str.contains("filename=\"report.pdf\""), "plain=\(str)")
+        XCTAssertTrue(str.contains(pdf.base64EncodedString()), "the attachment must be decrypted: \(str)")
+        XCTAssertFalse(str.contains("<html>"), "the HTML part is outside the encryption: \(str)")
     }
 
     /// Parts the sender added outside the encryption must not be shown under
