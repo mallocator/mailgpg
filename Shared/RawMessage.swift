@@ -65,19 +65,51 @@ nonisolated enum RawMessage {
     /// signature never verified. The body scans are byte searches, so ordinary
     /// large messages never become a Swift String.
     static func pgpContent(of data: Data) -> PGPContent {
+        if isMIMEEncrypted(data) {
+            return PGPContent(isEncrypted: true, isSigned: false)
+        }
         if let contentType = contentType(of: data) {
-            let type = mediaType(of: contentType)
-            let proto = parameter("protocol", in: contentType)?.lowercased()
-            if type == "multipart/encrypted" && proto == "application/pgp-encrypted" {
-                return PGPContent(isEncrypted: true, isSigned: false)
-            }
-            if type == "multipart/signed" && proto == "application/pgp-signature" {
+            if mediaType(of: contentType) == "multipart/signed",
+               parameter("protocol", in: contentType)?.lowercased() == "application/pgp-signature" {
                 return PGPContent(isEncrypted: false, isSigned: true)
             }
         }
         // Inline PGP (e.g. Mailvelope): the armour is in the body.
         return PGPContent(isEncrypted: data.range(of: inlineMessageMarker) != nil,
                           isSigned: data.range(of: inlineSignedMarker) != nil)
+    }
+
+    /// Whether the message's own Content-Type is RFC 3156 multipart/encrypted.
+    /// Unlike `pgpContent`, the body is not scanned for inline armour: a signed
+    /// text part quoting an armoured block is text, not ciphertext to open.
+    static func isMIMEEncrypted(_ data: Data) -> Bool {
+        guard let contentType = contentType(of: data) else { return false }
+        return mediaType(of: contentType) == "multipart/encrypted"
+            && parameter("protocol", in: contentType)?.lowercased() == "application/pgp-encrypted"
+    }
+
+    /// `message` with its body replaced by `entity`, a MIME entity (headers,
+    /// blank line, body) such as the signed part of a multipart/signed message.
+    /// The envelope keeps every header but its Content-* ones; the entity's
+    /// headers say what the new body is. Written with CRLF throughout, the
+    /// canonical form `signedParts` already returns entities in.
+    static func replacingBody(of message: Data, with entity: Data) -> Data {
+        // Lenient: headers are ASCII by specification, and a stray byte must
+        // not hide a header.
+        // swiftlint:disable:next optional_data_string_conversion
+        let block = String(decoding: headerBlock(in: message), as: UTF8.self)
+        var fields: [String] = []
+        for line in block.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "\n" || $0 == "\r\n" }) {
+            if line.first == " " || line.first == "\t", !fields.isEmpty {
+                fields[fields.count - 1] += "\r\n" + line
+            } else if !line.isEmpty {
+                fields.append(String(line))
+            }
+        }
+        let envelope = fields.filter { !$0.lowercased().hasPrefix("content-") }
+        var out = Data(envelope.map { $0 + "\r\n" }.joined().utf8)
+        out.append(normalizedToCRLF(entity))
+        return out
     }
 
     // MARK: - Content-Type

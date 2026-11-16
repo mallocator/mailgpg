@@ -223,6 +223,26 @@ final class RawMessageTests: XCTestCase {
         XCTAssertNil(RawMessage.signedParts(of: Data(message.utf8)))
     }
 
+    // MARK: - Nested entities
+
+    func testIsMIMEEncrypted_readsTheContentTypeOnly() {
+        let encrypted = "Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=x\n\n--x"
+        XCTAssertTrue(RawMessage.isMIMEEncrypted(Data(encrypted.utf8)))
+        // Quoted armour in a signed text part is text, not ciphertext to open.
+        let quoting = "Content-Type: text/plain\n\n-----BEGIN PGP MESSAGE-----\nhEwD\n-----END PGP MESSAGE-----"
+        XCTAssertFalse(RawMessage.isMIMEEncrypted(Data(quoting.utf8)))
+    }
+
+    func testReplacingBody_keepsTheEnvelopeAndTakesTheEntitysContentHeaders() {
+        let message = "From: alice@example.com\nSubject: Hi\n there\nContent-Type: multipart/signed;\n boundary=s\n"
+            + "Content-Transfer-Encoding: 7bit\nMIME-Version: 1.0\n\n--s\nbody"
+        let entity = "Content-Type: multipart/encrypted; boundary=e\n\n--e\ncipher\n"
+        let result = String(data: RawMessage.replacingBody(of: Data(message.utf8), with: Data(entity.utf8)),
+                            encoding: .utf8)
+        XCTAssertEqual(result, "From: alice@example.com\r\nSubject: Hi\r\n there\r\nMIME-Version: 1.0\r\n"
+                       + "Content-Type: multipart/encrypted; boundary=e\r\n\r\n--e\r\ncipher\r\n")
+    }
+
     // MARK: - Header values
 
     func testHeaderValues_unfoldsAFoldedFrom() {

@@ -51,3 +51,38 @@ enum SecurityStatus: Equatable, Codable {
     /// No PGP content detected.
     case plain
 }
+
+extension SecurityStatus {
+    /// The status of a message signed and encrypted in two layers: a
+    /// multipart/signed entity inside the ciphertext (mutt, KMail), or a
+    /// multipart/encrypted entity inside a signature. `decryption` is gpg's
+    /// status for the encrypted layer, `signature` the verification of the
+    /// other one.
+    ///
+    /// A failure in either layer is the message's status: a signature that
+    /// does not verify, or an embedded one that does not, must not be hidden by
+    /// the layer that worked. Otherwise the signers of both layers count, once
+    /// each, and the message is encrypted when gpg decrypted it.
+    static func nested(decryption: SecurityStatus, signature: SecurityStatus) -> SecurityStatus {
+        guard case .signed(let verified) = signature else { return signature }
+        func joined(_ embedded: [Signer]) -> [Signer] {
+            var seen = Set<String>()
+            return (embedded + verified).filter { seen.insert($0.fingerprint).inserted }
+        }
+        switch decryption {
+        case .encrypted(let embedded): return .encrypted(signers: joined(embedded))
+        case .signed(let embedded):    return .signed(signers: joined(embedded))
+        default:                       return decryption
+        }
+    }
+
+    /// Whether this status, from gpg --decrypt, says it decrypted anything:
+    /// only DECRYPTION_OKAY does. gpg --decrypt also succeeds on an opaque
+    /// signed message or a stored literal, which were never encrypted. The
+    /// signer check may turn the status into an invalid signature, so ask the
+    /// status from before it.
+    var isDecrypted: Bool {
+        if case .encrypted = self { return true }
+        return false
+    }
+}

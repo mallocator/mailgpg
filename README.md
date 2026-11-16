@@ -181,7 +181,9 @@ Correctness fixes: the decode cache is keyed on message content rather than on
 headers two messages can share — which made Mail render one message's plaintext
 in place of another's; the signing key is chosen by the From address and, where
 several keys carry it, the newest; a signed message that quotes an encrypted
-block is verified instead of being taken for encrypted; an encrypted send needs
+block is verified instead of being taken for encrypted; a signature inside an
+encrypted message (as mutt and KMail send it) is verified, and an encrypted
+message inside a signature is decrypted; an encrypted send needs
 a resolved key for every To, Cc and Bcc address and fails otherwise, instead of
 going out encrypted to fewer people, as old ciphertext after an edit, or as
 plaintext.

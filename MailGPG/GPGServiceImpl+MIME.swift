@@ -502,13 +502,15 @@ extension GPGServiceImpl {
             let parts = str.components(separatedBy: delim)
             // parts: [preamble, version-part, encrypted-part, epilogue]
             if parts.count >= 3 {
-                let encPart = parts[2]
-                for sep in ["\r\n\r\n", "\n\n"] {
-                    if let bodyStart = encPart.range(of: sep) {
-                        let pgp = String(encPart[bodyStart.upperBound...])
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        return pgp.data(using: .utf8) ?? data
-                    }
+                // The first blank line, CRLF or LF: the armour's own blank
+                // line after BEGIN is not the end of the part's headers.
+                let encPart = Data(parts[2].utf8)
+                if let headersEnd = RawMessage.endOfHeaders(in: encPart) {
+                    // The armour is ASCII, and these bytes came from a String.
+                    // swiftlint:disable:next optional_data_string_conversion
+                    let pgp = String(decoding: encPart[headersEnd.upperBound...], as: UTF8.self)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    return Data(pgp.utf8)
                 }
             }
         }
@@ -591,9 +593,9 @@ extension GPGServiceImpl {
         var bodyData = plaintext
 
         // Check whether the decrypted content is itself a complete MIME entity.
-        let separator = plaintext.range(of: Data("\r\n\r\n".utf8))
-                     ?? plaintext.range(of: Data("\n\n".utf8))
-        if let separator {
+        // Its headers end at the first blank line, CRLF or LF: an entity with
+        // LF headers can carry CRLF content in its body.
+        if let separator = RawMessage.endOfHeaders(in: plaintext) {
             // Headers are ASCII by specification: a stray byte must not hide them.
             // swiftlint:disable:next optional_data_string_conversion
             let innerHeaders = String(decoding: plaintext[..<separator.lowerBound], as: UTF8.self)

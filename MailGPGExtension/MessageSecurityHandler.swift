@@ -552,28 +552,44 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
         }
     }
 
-    /// Signed only: extract the signed data and detached signature, then call
-    /// gpg --verify to check the signature.
+    /// Signed: extract the signed data and detached signature, then call
+    /// gpg --verify to check the signature. When the signed entity is itself
+    /// multipart/encrypted, it is decrypted too.
     private nonisolated static func verify(_ data: Data) async -> MEDecodedMessage? {
         guard let (signedData, signatureData) = RawMessage.signedParts(of: data) else {
             log.error("decodedMessage: could not extract signed parts from multipart/signed")
             return nil
         }
+        log.debug("decodedMessage: verifying signature (\(signedData.count) data bytes, \(signatureData.count) sig bytes)")
+        guard let rawStatus = await signatureStatus(signed: signedData, signature: signatureData) else { return nil }
+        log.debug("decodedMessage: verify completed")
+
+        // Encrypted inside signed: the signature covers the ciphertext, and
+        // the message is the plaintext. When decryption fails, the signed
+        // message is shown as it is.
+        if RawMessage.isMIMEEncrypted(signedData),
+           let (plaintext, decryptStatus) = try? await GPGService.shared.decrypt(
+               data: RawMessage.replacingBody(of: data, with: signedData)) {
+            log.debug("decodedMessage: decrypted the encrypted entity inside the signature")
+            let combined = SecurityStatus.nested(decryption: decryptStatus, signature: rawStatus)
+            return makeDecodedMessage(data: plaintext,
+                                      status: checkSignerMatchesSender(combined, messageData: data),
+                                      wasEncrypted: decryptStatus.isDecrypted,
+                                      banner: protectedSubjectBanner(outer: data, plaintext: plaintext))
+        }
+        return makeDecodedMessage(data: data, status: checkSignerMatchesSender(rawStatus, messageData: data))
+    }
+
+    /// gpg --verify of a detached signature. A signature gpg rejects is
+    /// `.signatureInvalid`; nil when the helper could not be asked.
+    private nonisolated static func signatureStatus(signed: Data, signature: Data) async -> SecurityStatus? {
         do {
-            log.debug("decodedMessage: verifying signature (\(signedData.count) data bytes, \(signatureData.count) sig bytes)")
-            let rawStatus = try await GPGService.shared.verify(data: signedData, signature: signatureData)
-            log.debug("decodedMessage: verify completed")
-            let status = checkSignerMatchesSender(rawStatus, messageData: data)
-            return makeDecodedMessage(data: data, status: status)
+            return try await GPGService.shared.verify(data: signed, signature: signature)
         } catch let error as NSError {
             logNSError(error, prefix: "decodedMessage: verify error")
             switch GPGXPCError(nsError: error) {
-            case .gpgFailed:
-                return makeDecodedMessage(
-                    data: data,
-                    status: .signatureInvalid(reason: error.localizedDescription))
-            default:
-                return nil
+            case .gpgFailed: return .signatureInvalid(reason: error.localizedDescription)
+            default:         return nil
             }
         }
     }
@@ -581,34 +597,25 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
     /// Encrypted (possibly also signed): decrypt.
     private nonisolated static func decrypt(_ data: Data) async -> MEDecodedMessage? {
         do {
-            let (plaintext, rawStatus) = try await GPGService.shared.decrypt(data: data)
+            let (plaintext, decryptStatus) = try await GPGService.shared.decrypt(data: data)
             log.debug("decodedMessage: decrypt succeeded")
+            var rawStatus = decryptStatus
+            // Signed inside encrypted (mutt, KMail): the decrypted entity is
+            // multipart/signed, and its signature is not one gpg --decrypt
+            // sees. Without verifying it the message read "encrypted, no
+            // signer" with a signature.asc attachment.
+            if case .encrypted = decryptStatus,
+               let (signedData, signatureData) = RawMessage.signedParts(of: plaintext),
+               let signature = await signatureStatus(signed: signedData, signature: signatureData) {
+                log.debug("decodedMessage: verified the signed entity inside the encryption")
+                rawStatus = .nested(decryption: decryptStatus, signature: signature)
+            }
             // Check against the envelope's From — that is the address
             // Mail displays, and therefore the claim being made.
             let status = checkSignerMatchesSender(rawStatus, messageData: data)
-            // Check for protected subject (RFC 3156 / Memory Hole):
-            // if the outer subject is a placeholder like "..." and the
-            // decrypted message has a real subject, show it via banner.
-            let outerSubject = headerValue("subject", in: data)
-            let innerSubject = headerValue("subject", in: plaintext)
-            let banner: MEDecodedMessageBanner?
-            if let inner = innerSubject,
-               let outer = outerSubject,
-               outer == "..." && inner != outer {
-                banner = MEDecodedMessageBanner(
-                    title: "🔒 Subject: \(decodeMIMEWords(inner))",
-                    primaryActionTitle: "",
-                    dismissable: false)
-            } else {
-                banner = nil
-            }
-            // Only gpg's DECRYPTION_OKAY makes it encrypted: gpg --decrypt also
-            // succeeds on an opaque signed message or a stored literal, which
-            // were never encrypted. The signer check may have turned the status
-            // into an invalid signature, so ask the status from before it.
-            let wasEncrypted: Bool
-            if case .encrypted = rawStatus { wasEncrypted = true } else { wasEncrypted = false }
-            return makeDecodedMessage(data: plaintext, status: status, wasEncrypted: wasEncrypted, banner: banner)
+            return makeDecodedMessage(data: plaintext, status: status,
+                                      wasEncrypted: decryptStatus.isDecrypted,
+                                      banner: protectedSubjectBanner(outer: data, plaintext: plaintext))
         } catch let error as NSError {
             logNSError(error, prefix: "decodedMessage: decrypt error")
             // Return nil so Mail shows the raw message instead of crashing.
@@ -616,6 +623,19 @@ class MessageSecurityHandler: NSObject, MEMessageSecurityHandler {
             // causes Mail's indexer to loop and trigger a KVO re-entrancy crash.
             return nil
         }
+    }
+
+    /// Protected subject (RFC 3156 / Memory Hole): when the outer subject is
+    /// the placeholder "..." and the decrypted message has a real one, show it
+    /// in a banner.
+    private nonisolated static func protectedSubjectBanner(outer: Data, plaintext: Data) -> MEDecodedMessageBanner? {
+        guard let inner = headerValue("subject", in: plaintext),
+              let outerSubject = headerValue("subject", in: outer),
+              outerSubject == "...", inner != outerSubject else { return nil }
+        return MEDecodedMessageBanner(
+            title: "🔒 Subject: \(decodeMIMEWords(inner))",
+            primaryActionTitle: "",
+            dismissable: false)
     }
 
     /// - Parameter wasEncrypted: `true` when returning decrypted plaintext,

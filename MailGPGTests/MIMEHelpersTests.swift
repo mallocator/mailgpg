@@ -251,6 +251,17 @@ final class MIMEHelpersTests: XCTestCase {
         XCTAssert(str.contains("-----BEGIN PGP MESSAGE-----"), "str=\(str)")
     }
 
+    func testExtractPGPPayload_LFPartHeadersCRLFArmour() {
+        // The armour's own blank line, after the BEGIN line, is CRLF. Looking
+        // for CRLF CRLF first split there and lost the BEGIN line.
+        let msg = "Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=PART\n\n"
+            + "--PART\nContent-Type: application/pgp-encrypted\n\nVersion: 1\n\n"
+            + "--PART\nContent-Type: application/octet-stream\n\n"
+            + "-----BEGIN PGP MESSAGE-----\r\n\r\nhEwD\r\n-----END PGP MESSAGE-----\r\n--PART--\n"
+        let str = String(data: svc.extractPGPPayload(from: Data(msg.utf8)), encoding: .utf8) ?? ""
+        XCTAssert(str.hasPrefix("-----BEGIN PGP MESSAGE-----"), "str=\(str.debugDescription)")
+    }
+
     func testExtractPGPPayload_inlinePGP() {
         let msg = "From: alice@example.com\n\n-----BEGIN PGP MESSAGE-----\nhEwD\n-----END PGP MESSAGE-----\n"
         let result = svc.extractPGPPayload(from: msg.data(using: .utf8)!)
@@ -612,6 +623,20 @@ final class MIMEHelpersTests: XCTestCase {
         // Body portion should not contain \r\n since outer headers are LF
         let bodyStart = result.range(of: "\n\n").map { result[$0.upperBound...] }.map(String.init) ?? result
         XCTAssertFalse(bodyStart.contains("\r\n"), "CRLF body not normalised; body=\(bodyStart.debugDescription)")
+    }
+
+    func testReconstructDecryptedMessage_LFHeaderEntityWithCRLFBody() {
+        // An entity with LF headers whose body carries a CRLF blank line: the
+        // split belongs at the first blank line, not the first CRLF one.
+        let original  = "From: a\nContent-Type: multipart/encrypted; boundary=\"X\"\n\n--X"
+        let plaintext = "Content-Type: text/html\n\n<p>quoted</p>\r\n\r\nContent-Type: text/evil\r\n"
+        let result    = String(data: svc.reconstructDecryptedMessage(
+            original:  original.data(using: .utf8)!,
+            plaintext: plaintext.data(using: .utf8)!
+        ), encoding: .utf8) ?? ""
+        let (headers, body) = svc.splitMessage(Data(result.utf8))
+        XCTAssertEqual(svc.foldedHeaderValue("content-type", in: headers), "text/html", "result=\(result.debugDescription)")
+        XCTAssert(String(data: body, encoding: .utf8)?.hasPrefix("<p>quoted</p>") == true, "result=\(result.debugDescription)")
     }
 
     // MARK: - reconstructDecryptedMessage (inline PGP)
