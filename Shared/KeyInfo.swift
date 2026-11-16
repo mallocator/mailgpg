@@ -101,18 +101,21 @@ struct KeyInfo: Codable, Identifiable, Equatable {
 }
 
 extension KeyInfo {
-    /// Which of `keys`, all carrying one address, to use for it: the pinned
-    /// fingerprint when it is among them, else the first. Another key for the
-    /// address listed before the pinned one must not shadow it: the pin check
-    /// would then report a changed key though the pinned one is right here.
-    static func preferring(_ pinned: String?, in keys: [KeyInfo]) -> KeyInfo? {
-        keys.first { $0.fingerprint == pinned } ?? keys.first
+    /// Which of `keys`, all carrying `address`, to use for it: the pinned
+    /// fingerprint when it is among them, else the first whose user ID for
+    /// `address` is verified, else the first. Another key for the address
+    /// listed before the pinned or verified one must not shadow it: the pin
+    /// check would then report a changed key though the right one is here.
+    static func preferring(_ pinned: String?, for address: String, in keys: [KeyInfo]) -> KeyInfo? {
+        keys.first { $0.fingerprint == pinned } ?? keys.first { $0.isTrusted(for: address) } ?? keys.first
     }
 
-    /// One key per address on `keys`, each chosen by `preferring(_:in:)` with
-    /// that address's pin. A key carrying three user IDs is listed under all three.
+    /// One key per address on `keys`, each chosen by `preferring(_:for:in:)`
+    /// with that address's pin. A key carrying three user IDs is listed under all three.
     static func keysByAddress(_ keys: [KeyInfo], pinned: (String) -> String?) -> [String: KeyInfo] {
         Dictionary(grouping: keys.flatMap { key in key.emails.map { ($0, key) } }, by: \.0)
-            .compactMapValues { pairs in preferring(pinned(pairs[0].0), in: pairs.map(\.1)) }
+            .compactMapValues { pairs in
+                preferring(pinned(pairs[0].0), for: pairs[0].0, in: pairs.map(\.1))
+            }
     }
 }

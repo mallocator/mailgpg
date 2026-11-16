@@ -120,7 +120,8 @@ extension GPGServiceImpl {
     /// Only a key carrying the address itself as a live user ID qualifies —
     /// primary or not — and an unexpired one wins over an expired one. For
     /// encryption, only a key that can still encrypt qualifies. Among those,
-    /// the `pinned` fingerprint wins over keys listed before it.
+    /// the `pinned` fingerprint wins, then a key whose user ID for the address
+    /// is verified, over keys listed before them.
     func usableKey(for email: String, in keys: [KeyInfo], forEncryption: Bool = false,
                    pinned: String? = nil) -> KeyInfo? {
         let wanted = email.lowercased()
@@ -128,7 +129,7 @@ extension GPGServiceImpl {
             !$0.isRevoked && $0.emails.contains(wanted) && (!forEncryption || $0.canEncrypt)
         }
         let unexpired = carrying.filter { $0.expiresAt.map { $0 > Date() } ?? true }
-        return KeyInfo.preferring(pinned, in: unexpired.isEmpty ? carrying : unexpired)
+        return KeyInfo.preferring(pinned, for: wanted, in: unexpired.isEmpty ? carrying : unexpired)
     }
 
     func listSecretKeys(reply: @escaping (Data?, Error?) -> Void) {

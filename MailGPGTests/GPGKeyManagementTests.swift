@@ -423,12 +423,30 @@ final class GPGKeyManagementTests: XCTestCase {
     // MARK: - Pinned key among several for one address
 
     /// Two keys carrying alice@bank.example, in listing order; Alice's pinned
-    /// key is the second.
+    /// key is the second. Both are public keys only, so neither is verified:
+    /// gpg trusts a key it generates ultimately.
     private func twoKeysForAlice() throws -> (listing: [KeyInfo], other: KeyInfo, pinned: KeyInfo) {
         try addKey(uid: "Mallory <alice@bank.example>")
         try addKey(uid: "Alice <alice@bank.example>")
+        let generated = try localListing("alice@bank.example").map(\.fingerprint)
+        let (exported, _, _) = try homedir.run(["--export"] + generated)
+        _ = try homedir.run(["--batch", "--yes", "--delete-secret-and-public-key"] + generated)
+        let (_, importErr, importCode) = try homedir.run(["--batch", "--import"], input: exported)
+        XCTAssertEqual(importCode, 0, "Re-import failed: \(importErr)")
         let listing = try localListing("alice@bank.example")
-        XCTAssertEqual(listing.count, 2)
+        XCTAssertEqual(listing.map(\.fingerprint), generated)
+        XCTAssertFalse(listing.contains { $0.isTrusted(for: "alice@bank.example") })
+        return (listing, listing[0], listing[1])
+    }
+
+    /// `twoKeysForAlice` with Alice's key, listed second, verified.
+    private func twoKeysForAliceHersVerified() throws -> (listing: [KeyInfo], other: KeyInfo, verified: KeyInfo) {
+        let (_, other, alice) = try twoKeysForAlice()
+        XCTAssertNil(wait { done in svc.lsignKey(fingerprint: alice.fingerprint) { done($0) } })
+        let listing = try localListing("alice@bank.example")
+        XCTAssertEqual(listing.map(\.fingerprint), [other.fingerprint, alice.fingerprint])
+        XCTAssertTrue(listing[1].isTrusted(for: "alice@bank.example"))
+        XCTAssertFalse(listing[0].isTrusted(for: "alice@bank.example"))
         return (listing, listing[0], listing[1])
     }
 
@@ -455,5 +473,45 @@ final class GPGKeyManagementTests: XCTestCase {
             let chosen = KeyInfo.keysByAddress(listing) { _ in pin }
             XCTAssertEqual(chosen["alice@bank.example"]?.fingerprint, other.fingerprint)
         }
+    }
+
+    // MARK: - Verified key among several for one address
+
+    func testUsableKey_prefersVerifiedKeyListedSecond() throws {
+        let (listing, other, verified) = try twoKeysForAliceHersVerified()
+        let gone = String(repeating: "A", count: 40)
+        for pin in [nil, gone] {
+            XCTAssertEqual(svc.usableKey(for: "Alice@Bank.example", in: listing, forEncryption: false,
+                                         pinned: pin)?.fingerprint, verified.fingerprint)
+        }
+        // The pin still wins over a verified key.
+        XCTAssertEqual(svc.usableKey(for: "alice@bank.example", in: listing, pinned: other.fingerprint)?.fingerprint,
+                       other.fingerprint)
+    }
+
+    func testResolveKey_prefersVerifiedKey() throws {
+        let (_, _, verified) = try twoKeysForAliceHersVerified()
+        XCTAssertEqual(try svc.resolveKey(email: "alice@bank.example")?.fingerprint, verified.fingerprint)
+    }
+
+    func testKeysByAddress_prefersVerifiedKeyListedSecond() throws {
+        let (listing, other, verified) = try twoKeysForAliceHersVerified()
+        let gone = String(repeating: "A", count: 40)
+        for pin in [nil, gone] {
+            let chosen = KeyInfo.keysByAddress(listing) { _ in pin }
+            XCTAssertEqual(chosen["alice@bank.example"]?.fingerprint, verified.fingerprint)
+            XCTAssertFalse(try XCTUnwrap(chosen["alice@bank.example"]).replacesPin(pin, for: "alice@bank.example"))
+        }
+        let byPin = KeyInfo.keysByAddress(listing) { _ in other.fingerprint }
+        XCTAssertEqual(byPin["alice@bank.example"]?.fingerprint, other.fingerprint)
+    }
+
+    /// A user ID verified for another address doesn't count for this one.
+    func testPreferring_ignoresVerifiedUIDForOtherAddress() throws {
+        let (listing, other, _) = try twoKeysForAlice()
+        var second = listing[1]
+        second.addressValidity["bob@example.com"] = .full
+        XCTAssertEqual(KeyInfo.preferring(nil, for: "alice@bank.example", in: [other, second])?.fingerprint,
+                       other.fingerprint)
     }
 }
