@@ -235,14 +235,17 @@ final class GPGCryptoTests: XCTestCase {
     /// its own as `name.pgp`. `leadingParts` and `extraParts` are added
     /// verbatim before the text part and after the attachment.
     /// `nested` puts the text part in a multipart/alternative next to an
-    /// HTML part, the way Mail and most clients send it.
+    /// HTML part, the way Mail and most clients send it. `sender` encrypts
+    /// and signs both to the reader's key (default: the reader's own key).
     private func inlineMessageWithAttachment(signed: Bool, attachment: Data, leadingParts: String = "",
-                                             extraParts: String = "", nested: Bool = false) throws -> Data {
+                                             extraParts: String = "", nested: Bool = false,
+                                             sender: TempGPGHomedir? = nil) throws -> Data {
+        let sender = sender ?? homedir!
         var args = ["--trust-model", "always", "--encrypt", "--recipient", homedir.fingerprint]
-        if signed { args += ["--sign", "--local-user", homedir.fingerprint] }
-        let (armor, stderr, code) = try homedir.run(["--armor"] + args, input: Data("Inline secret body".utf8))
+        if signed { args += ["--sign", "--local-user", sender.fingerprint] }
+        let (armor, stderr, code) = try sender.run(["--armor"] + args, input: Data("Inline secret body".utf8))
         XCTAssertEqual(code, 0, "gpg encrypt failed: \(stderr)")
-        let (binary, stderr2, code2) = try homedir.run(args, input: attachment)
+        let (binary, stderr2, code2) = try sender.run(args, input: attachment)
         XCTAssertEqual(code2, 0, "gpg encrypt failed: \(stderr2)")
         var text = """
             Content-Type: text/plain; charset=utf-8
@@ -397,6 +400,78 @@ final class GPGCryptoTests: XCTestCase {
         XCTAssertFalse(str.contains("notes.txt"), "plain=\(str)")
         XCTAssertFalse(str.contains("forged.txt"), "plain=\(str)")
         XCTAssertFalse(str.contains(Data("forged attachment".utf8).base64EncodedString()), "plain=\(str)")
+    }
+
+    /// A sender whose key the reader doesn't have: their keyring holds the
+    /// reader's public key, the reader's lacks theirs.
+    private func unknownSender() throws -> TempGPGHomedir {
+        let sender = try TempGPGHomedir()
+        let (readerKey, _, _) = try homedir.run(["--armor", "--export", homedir.fingerprint])
+        _ = try sender.run(["--batch", "--import"], input: readerKey)
+        return sender
+    }
+
+    /// An attachment part encrypted to the reader by `by`, signed when `signed`.
+    private func encryptedAttachmentPart(_ name: String, content: String, by: TempGPGHomedir,
+                                         signed: Bool) throws -> String {
+        var args = ["--trust-model", "always", "--encrypt", "--recipient", homedir.fingerprint]
+        if signed { args += ["--sign", "--local-user", by.fingerprint] }
+        let (binary, stderr, code) = try by.run(args, input: Data(content.utf8))
+        XCTAssertEqual(code, 0, "gpg encrypt failed: \(stderr)")
+        return """
+            --MIXED
+            Content-Type: application/octet-stream; name="\(name).pgp"
+            Content-Disposition: attachment; filename="\(name).pgp"
+            Content-Transfer-Encoding: base64
+
+            \(binary.base64EncodedString(options: .lineLength76Characters))
+
+            """
+    }
+
+    /// Signed by a key not in the keyring (no fetch on open since MGP-16),
+    /// the text decrypted but `report.pdf.pgp` was dropped. Owner 2026-11-16:
+    /// keep attachments signed by the same missing key ID as the text.
+    func testDecryptInlinePGP_unknownSigner_keepsTheAttachmentSignedByThatKey() throws {
+        let sender = try unknownSender()
+        let pdf = Data("%PDF-1.4 report bytes \u{00}\u{01}\u{02}".utf8)
+        let (plain, status) = try decrypt(inlineMessageWithAttachment(signed: true, attachment: pdf,
+                                                                      sender: sender))
+
+        guard case .keyNotFound(let keyID) = status else {
+            return XCTFail("Expected .keyNotFound, got \(status)")
+        }
+        let (senderKeys, _, _) = try sender.run(["--list-keys", "--with-colons", sender.fingerprint])
+        let listing = try XCTUnwrap(String(bytes: senderKeys, encoding: .utf8))
+        XCTAssertTrue(listing.contains(keyID.uppercased()), "keyID=\(keyID) is not the sender's")
+        let str = try XCTUnwrap(String(data: plain, encoding: .utf8))
+        XCTAssertTrue(str.contains("Inline secret body"), "plain=\(str)")
+        XCTAssertTrue(str.contains("filename=\"report.pdf\""), "plain=\(str)")
+        XCTAssertTrue(str.contains(pdf.base64EncodedString()), "the attachment must be decrypted: \(str)")
+    }
+
+    /// With the text's signer unknown, an attachment anyone could add is still
+    /// dropped: one not signed, one signed by another missing key, and one
+    /// signed by a key the reader has.
+    func testDecryptInlinePGP_unknownSigner_dropsAttachmentsSignedOtherwise() throws {
+        let sender = try unknownSender()
+        let stranger = try unknownSender()
+        let extra = try encryptedAttachmentPart("unsigned.txt", content: "unsigned attachment",
+                                                by: stranger, signed: false)
+            + encryptedAttachmentPart("stranger.txt", content: "stranger attachment", by: stranger, signed: true)
+            + encryptedAttachmentPart("known.txt", content: "known attachment", by: homedir, signed: true)
+        let (plain, status) = try decrypt(inlineMessageWithAttachment(
+            signed: true, attachment: Data("real".utf8), extraParts: extra, sender: sender))
+
+        guard case .keyNotFound = status else {
+            return XCTFail("Expected .keyNotFound, got \(status)")
+        }
+        let str = try XCTUnwrap(String(data: plain, encoding: .utf8))
+        XCTAssertTrue(str.contains("filename=\"report.pdf\""), "plain=\(str)")
+        for name in ["unsigned", "stranger", "known"] {
+            XCTAssertFalse(str.contains("\(name).txt"), "plain=\(str)")
+            XCTAssertFalse(str.contains(Data("\(name) attachment".utf8).base64EncodedString()), "plain=\(str)")
+        }
     }
 
     /// gpg --decrypt exits 0 on a literal packet that was never encrypted.

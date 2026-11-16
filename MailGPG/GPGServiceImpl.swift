@@ -425,17 +425,37 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
     /// signer, so an attachment is kept only when gpg decrypted it and every
     /// signer of the text signed it too: anyone can encrypt an attachment to
     /// us and add it to Alice's message. The others stay in the raw source.
+    /// When the text's signer key is missing, an attachment signed by the same
+    /// missing key ID is kept under that status (owner 2026-11-16, MGP-31).
+    /// Anyone can claim that key ID in an unchecked signature, so the
+    /// attachment is as unverified as the text; once the key is fetched the
+    /// text is `.encrypted` and the fingerprint rule drops a forged one.
     private func decryptedAttachments(of data: Data, body: Data,
                                       bodyStatus: SecurityStatus) throws -> [(filename: String, data: Data)] {
-        guard case .encrypted(let bodySigners) = bodyStatus else { return [] }
-        let required = Set(bodySigners.map(\.fingerprint))
+        let signedLikeTheText: (SecurityStatus) -> Bool
+        switch bodyStatus {
+        case .encrypted(let bodySigners):
+            let required = Set(bodySigners.map(\.fingerprint))
+            signedLikeTheText = { status in
+                guard case .encrypted(let signers) = status else { return false }
+                return required.isSubset(of: Set(signers.map(\.fingerprint)))
+            }
+        case .keyNotFound(let missingKeyID) where missingKeyID != "unknown":
+            signedLikeTheText = { status in
+                guard case .keyNotFound(let keyID) = status else { return false }
+                return keyID.caseInsensitiveCompare(missingKeyID) == .orderedSame
+            }
+        default:
+            return []
+        }
         var kept: [(filename: String, data: Data)] = []
         for attachment in encryptedAttachments(in: data, excluding: body) {
-            let (plaintext, _, statusText, code) = try gpgWithStatus(
+            let (plaintext, _, statusText, _) = try gpgWithStatus(
                 ["--decrypt", "--batch", "--yes", "--no-auto-key-retrieve"], input: attachment.payload)
-            guard code == 0 || hasStatus("DECRYPTION_OKAY", in: statusText),
-                  case .encrypted(let signers) = parseDecryptStatus(status: statusText),
-                  required.isSubset(of: Set(signers.map(\.fingerprint))) else {
+            // DECRYPTION_OKAY, not the exit code: gpg exits 2 on a missing
+            // signer key, and 0 on a signed literal that was never encrypted.
+            guard hasStatus("DECRYPTION_OKAY", in: statusText),
+                  signedLikeTheText(parseDecryptStatus(status: statusText)) else {
                 log.info("decrypt: left out an attachment not encrypted and signed like the text")
                 continue
             }
