@@ -232,11 +232,12 @@ final class GPGCryptoTests: XCTestCase {
 
     /// An inline-PGP message with its attachments, as Enigmail sends it: the
     /// text part carries the armoured block, each attachment is encrypted on
-    /// its own as `name.pgp`. `extraParts` are added verbatim.
+    /// its own as `name.pgp`. `leadingParts` and `extraParts` are added
+    /// verbatim before the text part and after the attachment.
     /// `nested` puts the text part in a multipart/alternative next to an
     /// HTML part, the way Mail and most clients send it.
-    private func inlineMessageWithAttachment(signed: Bool, attachment: Data, extraParts: String = "",
-                                             nested: Bool = false) throws -> Data {
+    private func inlineMessageWithAttachment(signed: Bool, attachment: Data, leadingParts: String = "",
+                                             extraParts: String = "", nested: Bool = false) throws -> Data {
         var args = ["--trust-model", "always", "--encrypt", "--recipient", homedir.fingerprint]
         if signed { args += ["--sign", "--local-user", homedir.fingerprint] }
         let (armor, stderr, code) = try homedir.run(["--armor"] + args, input: Data("Inline secret body".utf8))
@@ -268,7 +269,7 @@ final class GPGCryptoTests: XCTestCase {
             Subject: Inline with attachment
             Content-Type: multipart/mixed; boundary="MIXED"
 
-            --MIXED
+            \(leadingParts)--MIXED
             \(text)
             --MIXED
             Content-Type: application/octet-stream; name="report.pdf.pgp"
@@ -329,6 +330,32 @@ final class GPGCryptoTests: XCTestCase {
         XCTAssertTrue(str.contains("filename=\"report.pdf\""), "plain=\(str)")
         XCTAssertTrue(str.contains(pdf.base64EncodedString()), "the attachment must be decrypted: \(str)")
         XCTAssertFalse(str.contains("<html>"), "the HTML part is outside the encryption: \(str)")
+    }
+
+    /// With several text/plain parts, the one holding the inline block wins,
+    /// not the first: a plain note ahead of it hid the block from the rebuild,
+    /// and with it `report.pdf.pgp`. The note stays out of the decrypted text.
+    func testDecryptInlinePGP_blockInALaterTextPart_wins() throws {
+        let pdf = Data("%PDF-1.4 report bytes \u{00}\u{01}\u{02}".utf8)
+        let note = """
+            --MIXED
+            Content-Type: text/plain; charset=utf-8
+
+            Plain note before the block
+
+            """
+        let (plain, status) = try decrypt(inlineMessageWithAttachment(signed: true, attachment: pdf,
+                                                                      leadingParts: note))
+
+        guard case .encrypted(let signers) = status, signers.count == 1 else {
+            return XCTFail("Expected encrypted and signed, got \(status)")
+        }
+        let str = try XCTUnwrap(String(data: plain, encoding: .utf8))
+        XCTAssertTrue(str.lowercased().contains("content-type: multipart/mixed"), "plain=\(str)")
+        XCTAssertTrue(str.contains("Inline secret body"), "plain=\(str)")
+        XCTAssertFalse(str.contains("Plain note before the block"), "plain=\(str)")
+        XCTAssertTrue(str.contains("filename=\"report.pdf\""), "plain=\(str)")
+        XCTAssertTrue(str.contains(pdf.base64EncodedString()), "the attachment must be decrypted: \(str)")
     }
 
     /// Parts the sender added outside the encryption must not be shown under
