@@ -418,11 +418,37 @@ final class GPGServiceImpl: NSObject, GPGXPCProtocol {
             // MEDecodedMessage requires a complete RFC 2822 message (headers + body).
             // GPG only returns the decrypted payload bytes; we must reconstruct
             // the full message from the outer envelope headers.
-            let reconstructed = reconstructDecryptedMessage(original: data, plaintext: plaintext)
+            let reconstructed = reconstructDecryptedMessage(
+                original: data, plaintext: plaintext,
+                attachments: try decryptedAttachments(of: data, body: payload, bodyStatus: status))
             reply(reconstructed, try xpcEncode(enrichFromKeyring(status)), nil)
         } catch {
             reply(nil, nil, error as NSError)
         }
+    }
+
+    /// The attachments of an inline-PGP message that may be shown with its
+    /// decrypted text, decrypted. Mail shows them under the text's lock and
+    /// signer, so an attachment is kept only when gpg decrypted it and every
+    /// signer of the text signed it too: anyone can encrypt an attachment to
+    /// us and add it to Alice's message. The others stay in the raw source.
+    private func decryptedAttachments(of data: Data, body: Data,
+                                      bodyStatus: SecurityStatus) throws -> [(filename: String, data: Data)] {
+        guard case .encrypted(let bodySigners) = bodyStatus else { return [] }
+        let required = Set(bodySigners.map(\.fingerprint))
+        var kept: [(filename: String, data: Data)] = []
+        for attachment in encryptedAttachments(in: data, excluding: body) {
+            let (plaintext, _, statusText, code) = try gpgWithStatus(
+                ["--decrypt", "--batch", "--yes"], input: attachment.payload)
+            guard code == 0 || hasStatus("DECRYPTION_OKAY", in: statusText),
+                  case .encrypted(let signers) = parseDecryptStatus(status: statusText),
+                  required.isSubset(of: Set(signers.map(\.fingerprint))) else {
+                log.info("decrypt: left out an attachment not encrypted and signed like the text")
+                continue
+            }
+            kept.append((attachment.filename, plaintext))
+        }
+        return kept
     }
 
     func verify(data: Data, signature: Data,

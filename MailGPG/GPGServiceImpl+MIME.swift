@@ -3,6 +3,7 @@
 
 import Foundation
 import os
+import UniformTypeIdentifiers
 
 extension GPGServiceImpl {
 
@@ -530,21 +531,76 @@ extension GPGServiceImpl {
         return data
     }
 
+    /// The attachments of an inline-PGP message that are encrypted on their
+    /// own, the way Enigmail sends them: parts named `*.pgp`, `*.gpg`, or
+    /// `*.asc` holding an armoured message, at any depth. Returns each one's
+    /// name without that suffix and its OpenPGP bytes. `excluding` is the
+    /// body's own block, which is not an attachment even when its part has a
+    /// file name.
+    func encryptedAttachments(in message: Data, excluding body: Data) -> [(filename: String, payload: Data)] {
+        guard !RawMessage.isMIMEEncrypted(message) else { return [] }
+        let (headers, bodyData) = splitMessage(message)
+        let ct = foldedHeaderValue("content-type", in: headers) ?? "text/plain"
+        if RawMessage.mediaType(of: ct).hasPrefix("multipart/") {
+            guard let boundary = headerParameter("boundary", in: ct) else { return [] }
+            return RawMessage.bodyParts(of: bodyData, boundary: boundary)
+                .flatMap { encryptedAttachments(in: $0, excluding: body) }
+        }
+        let disposition = foldedHeaderValue("content-disposition", in: headers) ?? ""
+        guard let name = headerParameter("filename", in: disposition) ?? headerParameter("name", in: ct),
+              let suffix = [".pgp", ".gpg", ".asc"].first(where: { name.lowercased().hasSuffix($0) })
+        else { return [] }
+        let payload = decodedTransferData(bodyData, encoding: foldedHeaderValue("content-transfer-encoding", in: headers))
+        // An .asc file is as often a key or a detached signature.
+        if suffix == ".asc", payload.range(of: Data("-----BEGIN PGP MESSAGE-----".utf8)) == nil { return [] }
+        if !body.isEmpty, payload.range(of: body) != nil { return [] }
+        let filename = String(name.dropLast(suffix.count))
+        return [(filename.isEmpty ? "attachment" : filename, payload)]
+    }
+
+    /// The part headers of a decrypted attachment. The name came from the
+    /// sender: quotes and line breaks in it would end the parameter or the
+    /// header.
+    private func attachmentHeaders(_ filename: String, eol: String) -> String {
+        let name = String(filename.filter { !"\"\\\r\n".contains($0) })
+        let type = UTType(filenameExtension: (name as NSString).pathExtension)?.preferredMIMEType
+            ?? "application/octet-stream"
+        return "Content-Type: \(type); name=\"\(name)\"" + eol
+            + "Content-Disposition: attachment; filename=\"\(name)\"" + eol
+            + "Content-Transfer-Encoding: base64"
+    }
+
+    /// A MIME part body as bytes, decoded according to its Content-Transfer-Encoding.
+    private func decodedTransferData(_ body: Data, encoding: String?) -> Data {
+        switch encoding?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "base64":
+            return Data(base64Encoded: body, options: .ignoreUnknownCharacters) ?? body
+        case "quoted-printable":
+            // Quoted-printable is ASCII by definition.
+            // swiftlint:disable:next optional_data_string_conversion
+            return decodeQuotedPrintableData(String(decoding: body, as: UTF8.self))
+        default:
+            return body
+        }
+    }
+
     /// Reconstruct a complete RFC 2822 message from the outer encrypted envelope
     /// and the decrypted payload. `MEDecodedMessage` requires a full RFC 2822
     /// message, not just the raw decrypted bytes.
     ///
     /// We handle three cases:
     ///  • Inline PGP: the original message contains a PGP block embedded in a
-    ///    text/plain body (possibly inside multipart/alternative). The encrypted
-    ///    block is replaced with the decrypted text; surrounding prose is kept.
+    ///    text/plain body (possibly inside multipart/alternative). The message
+    ///    becomes the decrypted text, followed by `attachments` in a
+    ///    multipart/mixed when there are any.
     ///  • Full inner MIME entity (RFC 3156-compliant, used by Thunderbird etc.):
     ///    the decrypted bytes start with MIME headers (e.g. Content-Type:) followed
     ///    by a blank line and the body. We extract those headers and use them.
     ///  • Body-only (used by our own outgoing messages):
     ///    the decrypted bytes are the raw body with no headers. We default to
     ///    text/plain and use the raw bytes as the body.
-    func reconstructDecryptedMessage(original: Data, plaintext: Data) -> Data {
+    func reconstructDecryptedMessage(original: Data, plaintext: Data,
+                                     attachments: [(filename: String, data: Data)] = []) -> Data {
         // Lenient, never nil. `String(data:encoding:.utf8)` returns nil for a
         // body in any non-UTF-8 charset — iso-8859-1 is still common — and the
         // `?? ""` that followed turned that into a message with no body at all.
@@ -555,7 +611,7 @@ extension GPGServiceImpl {
         // Text around the block is neither encrypted nor signed, but shown
         // with it, it took on the block's lock and signer: anyone could wrap a
         // ciphertext Alice once sent in their own words. It stays in the raw
-        // source.
+        // source, and so does every part that was not encrypted on its own.
         if let originalStr = String(data: original, encoding: .utf8),
            let (envHeaders, partCT, decodedBody) = findTextPlainBody(in: originalStr),
            inlinePGPRange(in: decodedBody) != nil {
@@ -570,13 +626,33 @@ extension GPGServiceImpl {
             // charset forward labelled our UTF-8 bytes as something else, which
             // renders as mojibake the moment the message contains a non-ASCII
             // character.
-            headers = setHeader("Content-Type", to: withCharsetUTF8(partCT), in: headers)
-            headers = setHeader("Content-Transfer-Encoding", to: "8bit", in: headers)
+            let textHeaders = "Content-Type: " + withCharsetUTF8(partCT) + eol
+                + "Content-Transfer-Encoding: 8bit"
+            let normalizedBody = normalizeLineEndings(in: plaintextStr, to: eol)
+            var body = Data(normalizedBody.utf8)
+            if attachments.isEmpty {
+                headers = setHeader("Content-Type", to: withCharsetUTF8(partCT), in: headers)
+                headers = setHeader("Content-Transfer-Encoding", to: "8bit", in: headers)
+            } else {
+                let boundary = "MailGPG-" + UUID().uuidString
+                headers = setHeader("Content-Type", to: "multipart/mixed; boundary=\"\(boundary)\"", in: headers)
+                body = Data(("--" + boundary + eol + textHeaders + eol + eol + normalizedBody + eol).utf8)
+                for attachment in attachments {
+                    body.append(Data(("--" + boundary + eol + attachmentHeaders(attachment.filename, eol: eol)
+                                      + eol + eol).utf8))
+                    body.append(Data(attachment.data.base64EncodedString(options: .lineLength76Characters)
+                        .replacingOccurrences(of: "\r\n", with: eol).utf8))
+                    body.append(Data(eol.utf8))
+                }
+                body.append(Data(("--" + boundary + "--" + eol).utf8))
+                log.info("decrypt: kept \(attachments.count) decrypted attachment(s)")
+            }
             if foldedHeaderValue("mime-version", in: headers) == nil {
                 headers += eol + "MIME-Version: 1.0"
             }
-            let normalizedBody = normalizeLineEndings(in: plaintextStr, to: eol)
-            return (headers + eol + eol + normalizedBody).data(using: .utf8) ?? Data(plaintextStr.utf8)
+            var message = Data((headers + eol + eol).utf8)
+            message.append(body)
+            return message
         }
 
         // ── multipart/encrypted (RFC 3156) ───────────────────────────────────

@@ -183,7 +183,8 @@ in place of another's; the signing key is chosen by the From address and, where
 several keys carry it, the newest; a signed message that quotes an encrypted
 block is verified instead of being taken for encrypted; a signature inside an
 encrypted message (as mutt and KMail send it) is verified, and an encrypted
-message inside a signature is decrypted; an encrypted send needs
+message inside a signature is decrypted; inline-PGP mail keeps its attachments
+that were encrypted and signed like its text; an encrypted send needs
 a resolved key for every To, Cc and Bcc address and fails otherwise, instead of
 going out encrypted to fewer people, as old ciphertext after an edit, or as
 plaintext.

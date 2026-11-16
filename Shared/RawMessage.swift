@@ -242,7 +242,7 @@ nonisolated enum RawMessage {
     /// "--boundary" at the start of a line followed by nothing but white space,
     /// and the line break before it belongs to the delimiter, not the part;
     /// "--boundary--" closes. The boundary string anywhere else is text.
-    private static func bodyParts(of body: Data, boundary: String) -> [Data] {
+    static func bodyParts(of body: Data, boundary: String) -> [Data] {
         let lf: UInt8 = 0x0A, cr: UInt8 = 0x0D, dash: UInt8 = 0x2D
         let delimiter = Data(("--" + boundary).utf8)
         var parts: [Data] = []

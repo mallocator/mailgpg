@@ -230,6 +230,112 @@ final class GPGCryptoTests: XCTestCase {
         XCTAssertTrue(signers.isEmpty, "Encrypt-only message should have no signers")
     }
 
+    /// An inline-PGP message with its attachments, as Enigmail sends it: the
+    /// text part carries the armoured block, each attachment is encrypted on
+    /// its own as `name.pgp`. `extraParts` are added verbatim.
+    private func inlineMessageWithAttachment(signed: Bool, attachment: Data,
+                                             extraParts: String = "") throws -> Data {
+        var args = ["--trust-model", "always", "--encrypt", "--recipient", homedir.fingerprint]
+        if signed { args += ["--sign", "--local-user", homedir.fingerprint] }
+        let (armor, stderr, code) = try homedir.run(["--armor"] + args, input: Data("Inline secret body".utf8))
+        XCTAssertEqual(code, 0, "gpg encrypt failed: \(stderr)")
+        let (binary, stderr2, code2) = try homedir.run(args, input: attachment)
+        XCTAssertEqual(code2, 0, "gpg encrypt failed: \(stderr2)")
+        let message = """
+            From: \(homedir.email)
+            To: \(homedir.email)
+            Subject: Inline with attachment
+            Content-Type: multipart/mixed; boundary="MIXED"
+
+            --MIXED
+            Content-Type: text/plain; charset=utf-8
+            Content-Transfer-Encoding: 7bit
+
+            \(String(data: armor, encoding: .utf8)!.trimmingCharacters(in: .whitespacesAndNewlines))
+            --MIXED
+            Content-Type: application/octet-stream; name="report.pdf.pgp"
+            Content-Disposition: attachment; filename="report.pdf.pgp"
+            Content-Transfer-Encoding: base64
+
+            \(binary.base64EncodedString(options: .lineLength76Characters))
+            \(extraParts)--MIXED--
+            """
+        return Data(message.utf8)
+    }
+
+    private func decrypt(_ message: Data) throws -> (message: Data, status: SecurityStatus) {
+        var plain: Data?
+        var statusRaw: Data?
+        let sem = DispatchSemaphore(value: 0)
+        svc.decrypt(data: message) { plainData, statusData, error in
+            XCTAssertNil(error, "Decrypt error: \(String(describing: error))")
+            plain = plainData
+            statusRaw = statusData
+            sem.signal()
+        }
+        sem.wait()
+        let status = try XCTUnwrap(statusRaw.flatMap { try? xpcDecode(SecurityStatus.self, from: $0) })
+        return (try XCTUnwrap(plain), status)
+    }
+
+    /// Decrypting an inline-PGP message kept only its text: `report.pdf.pgp`
+    /// was gone from the decrypted view.
+    func testDecryptInlinePGP_keepsTheDecryptedAttachment() throws {
+        let pdf = Data("%PDF-1.4 report bytes \u{00}\u{01}\u{02}".utf8)
+        let (plain, status) = try decrypt(inlineMessageWithAttachment(signed: true, attachment: pdf))
+
+        guard case .encrypted(let signers) = status, signers.count == 1 else {
+            return XCTFail("Expected encrypted and signed, got \(status)")
+        }
+        let str = try XCTUnwrap(String(data: plain, encoding: .utf8))
+        XCTAssertTrue(str.lowercased().contains("content-type: multipart/mixed"), "plain=\(str)")
+        XCTAssertTrue(str.contains("Inline secret body"), "plain=\(str)")
+        XCTAssertTrue(str.contains("filename=\"report.pdf\""), "plain=\(str)")
+        XCTAssertTrue(str.contains(pdf.base64EncodedString()), "the attachment must be decrypted: \(str)")
+        XCTAssertFalse(str.contains("report.pdf.pgp"), "plain=\(str)")
+    }
+
+    /// Parts the sender added outside the encryption must not be shown under
+    /// its lock and signer: an unencrypted text part and attachment, and an
+    /// attachment anyone could encrypt to us but nobody signed.
+    func testDecryptInlinePGP_dropsPartsOutsideTheEncryption() throws {
+        let (unsigned, stderr, code) = try homedir.run(
+            ["--trust-model", "always", "--encrypt", "--recipient", homedir.fingerprint],
+            input: Data("forged attachment".utf8))
+        XCTAssertEqual(code, 0, "gpg encrypt failed: \(stderr)")
+        let extra = """
+            --MIXED
+            Content-Type: text/plain; charset=utf-8
+
+            Unencrypted note next to the block
+            --MIXED
+            Content-Type: text/plain; name="notes.txt"
+            Content-Disposition: attachment; filename="notes.txt"
+
+            Unencrypted attachment
+            --MIXED
+            Content-Type: application/octet-stream; name="forged.txt.pgp"
+            Content-Disposition: attachment; filename="forged.txt.pgp"
+            Content-Transfer-Encoding: base64
+
+            \(unsigned.base64EncodedString(options: .lineLength76Characters))
+
+            """
+        let (plain, status) = try decrypt(inlineMessageWithAttachment(
+            signed: true, attachment: Data("real".utf8), extraParts: extra))
+
+        guard case .encrypted(let signers) = status, signers.count == 1 else {
+            return XCTFail("Expected encrypted and signed, got \(status)")
+        }
+        let str = try XCTUnwrap(String(data: plain, encoding: .utf8))
+        XCTAssertTrue(str.contains("filename=\"report.pdf\""), "plain=\(str)")
+        XCTAssertFalse(str.contains("Unencrypted note"), "plain=\(str)")
+        XCTAssertFalse(str.contains("Unencrypted attachment"), "plain=\(str)")
+        XCTAssertFalse(str.contains("notes.txt"), "plain=\(str)")
+        XCTAssertFalse(str.contains("forged.txt"), "plain=\(str)")
+        XCTAssertFalse(str.contains(Data("forged attachment".utf8).base64EncodedString()), "plain=\(str)")
+    }
+
     /// gpg --decrypt exits 0 on a literal packet that was never encrypted.
     func testDecryptInlineStoredLiteral_isNotEncrypted() throws {
         let (stored, stderr, code) = try homedir.run(["--armor", "--store"], input: Data("not secret".utf8))
