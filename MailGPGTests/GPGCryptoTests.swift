@@ -474,6 +474,65 @@ final class GPGCryptoTests: XCTestCase {
         }
     }
 
+    /// A text signed by a key its owner since revoked is `.signatureInvalid`:
+    /// the text still shows, under that warning, but no attachment does, not
+    /// even one signed by the same key.
+    func testDecryptInlinePGP_revokedSigner_dropsTheAttachment() throws {
+        let pdf = Data("%PDF-1.4 report bytes \u{00}\u{01}\u{02}".utf8)
+        let message = try inlineMessageWithAttachment(signed: true, attachment: pdf)
+        // gpg writes a revocation certificate for every key it generates,
+        // its armour line commented out with a leading colon.
+        let certPath = "\(homedir.path)/openpgp-revocs.d/\(homedir.fingerprint).rev"
+        let cert = try String(contentsOfFile: certPath, encoding: .utf8)
+            .replacingOccurrences(of: ":-----BEGIN", with: "-----BEGIN")
+        let (_, stderr, code) = try homedir.run(["--batch", "--import"], input: Data(cert.utf8))
+        XCTAssertEqual(code, 0, "gpg import of the revocation failed: \(stderr)")
+
+        let (plain, status) = try decrypt(message)
+
+        guard case .signatureInvalid(let reason) = status else {
+            return XCTFail("Expected .signatureInvalid, got \(status)")
+        }
+        XCTAssertTrue(reason.lowercased().contains("revoked"), "reason=\(reason)")
+        let str = try XCTUnwrap(String(data: plain, encoding: .utf8))
+        XCTAssertTrue(str.contains("Inline secret body"), "plain=\(str)")
+        XCTAssertFalse(str.lowercased().contains("multipart/mixed"), "plain=\(str)")
+        XCTAssertFalse(str.contains("report.pdf"), "plain=\(str)")
+        XCTAssertFalse(str.contains(pdf.base64EncodedString()), "plain=\(str)")
+    }
+
+    /// An attachment gpg can't decrypt (encrypted to a key the reader lacks)
+    /// is left out; the text and the attachment that decrypts still show.
+    /// The text is unsigned, so the signer check can't be what drops it.
+    func testDecryptInlinePGP_attachmentThatFailsToDecrypt_isDropped() throws {
+        let other = try TempGPGHomedir()
+        let (foreign, stderr, code) = try other.run(
+            ["--trust-model", "always", "--encrypt", "--recipient", other.fingerprint],
+            input: Data("foreign attachment".utf8))
+        XCTAssertEqual(code, 0, "gpg encrypt failed: \(stderr)")
+        let extra = """
+            --MIXED
+            Content-Type: application/octet-stream; name="foreign.txt.pgp"
+            Content-Disposition: attachment; filename="foreign.txt.pgp"
+            Content-Transfer-Encoding: base64
+
+            \(foreign.base64EncodedString(options: .lineLength76Characters))
+
+            """
+        let pdf = Data("%PDF-1.4 report bytes \u{00}\u{01}\u{02}".utf8)
+        let (plain, status) = try decrypt(inlineMessageWithAttachment(
+            signed: false, attachment: pdf, extraParts: extra))
+
+        guard case .encrypted(let signers) = status, signers.isEmpty else {
+            return XCTFail("Expected encrypted without signers, got \(status)")
+        }
+        let str = try XCTUnwrap(String(data: plain, encoding: .utf8))
+        XCTAssertTrue(str.contains("Inline secret body"), "plain=\(str)")
+        XCTAssertTrue(str.contains("filename=\"report.pdf\""), "plain=\(str)")
+        XCTAssertTrue(str.contains(pdf.base64EncodedString()), "the attachment must be decrypted: \(str)")
+        XCTAssertFalse(str.contains("foreign.txt"), "plain=\(str)")
+    }
+
     /// gpg --decrypt exits 0 on a literal packet that was never encrypted.
     func testDecryptInlineStoredLiteral_isNotEncrypted() throws {
         let (stored, stderr, code) = try homedir.run(["--armor", "--store"], input: Data("not secret".utf8))
