@@ -11,7 +11,9 @@ GnuPG over XPC. README.md lists what the fork changes; SETUP.md the remaining fi
   CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO`.
 - Build and install on the owner's Mac: `./build.sh` (`--test` runs the tests first and installs only if they
   pass); it signs with his team and replaces /Applications/MailGPG.app: only when he asks.
-- Release: a `vX.Y.Z` tag builds and publishes: only with the owner's OK.
+- Release: a `vX.Y.Z` tag builds and publishes. A patch tag (only Z raised) goes out without asking; a minor or
+  major one (Y or X raised) only with the owner's OK (owner 2026-11-22). Unsure which: ask. A failed release run:
+  fix it and tag the next patch.
 
 ## Differences from the global standards
 - Branches: work happens on `pyxzl`; `main` tracks upstream (mahaupt). CI's test workflow runs on main and pull
